@@ -1,0 +1,22 @@
+name: Probe original signing identity
+on:
+  push:
+    branches: ['ci/signing-probe']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    if: github.repository == 'AaronJny/VoiceInk' && github.ref == 'refs/heads/ci/signing-probe'
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Try original certificate without changing trust
+        env:
+          SIGNING_CERTIFICATE_P12_BASE64: ${{ secrets.SIGNING_CERTIFICATE_P12_BASE64 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY_SHA1: ${{ vars.SIGNING_IDENTITY_SHA1 }}
+        run: bash scripts/ci/probe-signing.sh
