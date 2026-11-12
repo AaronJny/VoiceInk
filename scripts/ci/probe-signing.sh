@@ -10,7 +10,7 @@ keychain="$RUNNER_TEMP/voiceink-signing.keychain-db"
 p12="$RUNNER_TEMP/voiceink-signing.p12"
 cleanup() {
   if [[ -f "$RUNNER_TEMP/voiceink-signing.cer" ]]; then
-    security remove-trusted-cert "$RUNNER_TEMP/voiceink-signing.cer" >/dev/null 2>&1 || true
+    sudo -n security remove-trusted-cert -d "$RUNNER_TEMP/voiceink-signing.cer" >/dev/null 2>&1 || true
   fi
   security delete-keychain "$keychain" > /dev/null 2>&1 || true
   rm -f "$p12" "$RUNNER_TEMP/voiceink-signing.cer"
@@ -44,7 +44,12 @@ actual_sha1=$(openssl x509 -in "$cert" -noout -fingerprint -sha1 | cut -d= -f2 |
 actual_sha256=$(openssl x509 -in "$cert" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':')
 [[ "$actual_sha1" == "$expected" ]]
 [[ "$actual_sha256" == 0D8A10DA627B134F22C2B6AB7FB2D7CFE5E4A0B462D6BC2FF0C437F2013D7129 ]]
-security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$cert"
+echo 'Adding temporary admin-domain codeSign-only trust for the exact original certificate.'
+python3 - "$keychain" "$cert" <<'PY'
+import subprocess,sys
+subprocess.run(['sudo','-n','security','add-trusted-cert','-d','-r','trustRoot','-p','codeSign','-k',sys.argv[1],sys.argv[2]],check=True,timeout=90)
+PY
+echo 'Scoped trust added; signing the probe.'
 security find-identity -v -p codesigning "$keychain" | grep -F "$expected"
 export VOICEINK_SIGNING_KEYCHAIN="$keychain"
 printf 'int main(void) { return 0; }\n' > "$RUNNER_TEMP/signing-probe.c"
