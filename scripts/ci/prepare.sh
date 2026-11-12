@@ -6,7 +6,7 @@ mkdir -p artifacts
 { xcodebuild -version; swift --version; uname -m; sw_vers; echo "ImageVersion=${ImageVersion:-unknown}"; } > artifacts/toolchain.txt
 swift --version | python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"Swift version (\d+)\.(\d+)",s); assert m and tuple(map(int,m.groups())) >= (6,3),s'
 # Xcode's Metal compiler is a separately downloadable component on some images.
-if ! xcrun --find metal > /dev/null 2>&1; then
+if ! xcrun metal --version > /dev/null 2>&1; then
   xcodebuild -downloadComponent MetalToolchain > artifacts/metal-setup.log 2>&1
 fi
 xcrun metal --version >> artifacts/toolchain.txt 2>&1

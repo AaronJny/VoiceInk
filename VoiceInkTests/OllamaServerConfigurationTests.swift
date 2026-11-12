@@ -10,13 +10,16 @@ private enum OllamaTransportTestError: Error {
 
 private final class OllamaTransportSpy: OllamaTransport, @unchecked Sendable {
     private let shouldFailFetch: Bool
+    private var failures: [LLMKitError]
+    private(set) var generationCount = 0
     private var request: (
         baseURL: URL, model: String, temperature: Double, contextLength: Int?, keepAlive: String?
     )?
     private var preloadRequest: (baseURL: URL, model: String, contextLength: Int?, keepAlive: String)?
 
-    init(shouldFailFetch: Bool = false) {
+    init(shouldFailFetch: Bool = false, failures: [LLMKitError] = []) {
         self.shouldFailFetch = shouldFailFetch
+        self.failures = failures
     }
 
     func checkConnection(baseURL: URL) async -> Bool {
@@ -38,7 +41,9 @@ private final class OllamaTransportSpy: OllamaTransport, @unchecked Sendable {
         keepAlive: String?,
         timeout: TimeInterval
     ) async throws -> OllamaGenerationResult {
+        generationCount += 1
         request = (baseURL, model, temperature, contextLength, keepAlive)
+        if !failures.isEmpty { throw failures.removeFirst() }
         return OllamaGenerationResult(
             text: " routed ",
             metrics: OllamaGenerationMetrics(
@@ -197,7 +202,7 @@ struct OllamaServerConfigurationTests {
             stream: false,
             think: false,
             keepAlive: "30m",
-            options: OllamaGenerationOptions(temperature: 0.3, contextLength: 4096)
+            options: OllamaRequestOptions(temperature: 0.3, contextLength: 4096)
         )
         let data = try JSONEncoder().encode(request)
         let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -208,6 +213,68 @@ struct OllamaServerConfigurationTests {
         #expect(object["think"] as? Bool == false)
         #expect(options["temperature"] as? Double == 0.3)
         #expect(options["num_ctx"] as? Int == 4096)
+    }
+
+    @MainActor
+    @Test func unifiedCompletionPreservesExplicitModeEndpoint() async throws {
+        let defaults = makeDefaults()
+        let transport = OllamaTransportSpy()
+        let service = OllamaService(userDefaults: defaults, transport: transport)
+        let aiService = AIService(userDefaults: defaults, ollamaService: service)
+        let endpoint = URL(string: "http://second-host:22000/root")!
+
+        let result = try await aiService.performChatCompletion(
+            provider: .ollama,
+            modelName: "mode-specific-model",
+            messages: [.user("transcript")],
+            systemPrompt: "unchanged system context",
+            localUserPrompt: "transcript",
+            ollamaBaseURL: endpoint
+        )
+
+        let request = try #require(transport.capturedRequest())
+        #expect(result.text == "routed")
+        #expect(request.baseURL == endpoint)
+        #expect(request.model == "mode-specific-model")
+    }
+
+    @Test func timeoutRetryStaysOnSameEndpointAndIsBounded() async throws {
+        let transport = OllamaTransportSpy(failures: [.timeout, .timeout])
+        let service = OllamaService(userDefaults: makeDefaults(), transport: transport)
+        let endpoint = URL(string: "http://second-host:22000/root")!
+        do {
+            _ = try await service.enhance(
+                "transcript", withSystemPrompt: "system", model: "mode-model",
+                baseURL: endpoint, retryOnTimeout: true
+            )
+            Issue.record("Expected timeout after one retry")
+        } catch let error as LocalAIError {
+            guard case .timeout = error else {
+                Issue.record("Expected timeout, got \(error)")
+                return
+            }
+        }
+        #expect(transport.generationCount == 2)
+        #expect(transport.capturedRequest()?.baseURL == endpoint)
+        #expect(transport.capturedRequest()?.model == "mode-model")
+    }
+
+    @Test func nonTimeoutFailureIsNotRetried() async throws {
+        let transport = OllamaTransportSpy(failures: [.httpError(statusCode: 500, message: "failure")])
+        let service = OllamaService(userDefaults: makeDefaults(), transport: transport)
+        do {
+            _ = try await service.enhance(
+                "transcript", withSystemPrompt: "system", model: "mode-model",
+                baseURL: URL(string: "http://second-host:22000")!, retryOnTimeout: true
+            )
+            Issue.record("Expected server error")
+        } catch let error as LocalAIError {
+            guard case .serverError = error else {
+                Issue.record("Expected server error, got \(error)")
+                return
+            }
+        }
+        #expect(transport.generationCount == 1)
     }
 
     private func makeDefaults() -> UserDefaults {

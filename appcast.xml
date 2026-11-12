@@ -3,20 +3,19 @@
     <channel>
         <title>VoiceInk</title>
         <item>
-            <title>2.11</title>
-            <pubDate>Wed, 12 Aug 2026 19:25:57 +0545</pubDate>
-            <sparkle:version>211</sparkle:version>
-            <sparkle:shortVersionString>2.11</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.4</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h3>What's New in VoiceInk 2.11</h3>
+            <title>2.27</title>
+            <pubDate>Wed, 11 Nov 2026 10:11:05 +0545</pubDate>
+            <sparkle:version>227</sparkle:version>
+            <sparkle:shortVersionString>2.27</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h3>What's New in VoiceInk 2.27</h3>
 <ul>
-  <li>✨ Added VoiceInk Refine for private, on-device transcription enhancement</li>
-  <li>🗣️ Added experimental Cohere Transcribe support</li>
-  <li>🎙️ Fixed microphone issues when using a MacBook with the lid closed</li>
-  <li>🛠️ Minor improvements and bug fixes</li>
+  <li>Added ElevenLabs Scribe V3 support.</li>
+  <li>Keep the display awake during active dictation (by <a href="https://github.com/ofa1">@ofa1</a>).</li>
+  <li>Performance fixes and improvements by <a href="https://github.com/wotschofsky">@wotschofsky</a>.</li>
 </ul>
 ]]></description>
-            <enclosure url="https://github.com/Beingpax/VoiceInk/releases/download/v2.11/VoiceInk.dmg" length="48763949" type="application/octet-stream" sparkle:edSignature="qREL4bqQ9wJCFiQ+Yb0/7OWQdZJ/yjUt2RltciRHXM9LMULnKQZRaaVQ6G35a8lsUjVgJdQs4LffBl8OBkp+Dg=="/>
+            <enclosure url="https://github.com/Beingpax/VoiceInk/releases/download/v2.27/VoiceInk.dmg" length="39307531" type="application/octet-stream" sparkle:edSignature="nYg43djgKgFyL7D2NU7OhjlY4Z050v6rRlDtYzqMNzCgx7XfLapDTXQvpFXDEZI1lLWYoWBqGGomps5C3nJJBg=="/>
         </item>
     </channel>
 </rss>

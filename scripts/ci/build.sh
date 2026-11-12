@@ -23,7 +23,7 @@ if ! xcodebuild "${common[@]}" -parallel-testing-enabled NO "${only[@]}" \
   tail -100 artifacts/tests.log; exit 1
 fi
 # Do not mistake an empty test run (or ASRBenchmark's no-input return) for validation.
-xcrun xcresulttool get test-results summary --path artifacts/FocusedTests.xcresult --format json > artifacts/test-summary.json
+xcrun xcresulttool get test-results summary --path artifacts/FocusedTests.xcresult > artifacts/test-summary.json
 python3 - <<'PY'
 import json
 s=json.load(open('artifacts/test-summary.json'))

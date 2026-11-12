@@ -121,6 +121,54 @@ struct LegacyStatsCarryForwardTests {
         #expect(reloadedService.completedRecord()?.legacyTotals.sessions == 6)
     }
 
+    @Test func completedRecordSurvivesCorruptPrimaryWithoutNewCutover() throws {
+        let defaults = makeDefaults()
+        setLegacyTotals(sessions: 6, words: 60, duration: 6, in: defaults)
+        let cutover = Date(timeIntervalSince1970: 2_500)
+        let service = makeService(defaults: defaults, now: cutover)
+        #expect(service.prepareIfNeeded())
+        let container = try makeContainer()
+        try insertMetric(timestamp: cutover, words: 10, duration: 1, into: container)
+        #expect(try service.finalizeIfNeeded(modelContainer: container))
+        let completed = service.completedRecord()
+
+        defaults.set(Data("corrupt".utf8), forKey: "LegacyStatsCarryForward.State.v1")
+        let restarted = makeService(defaults: defaults, now: cutover.addingTimeInterval(86_400))
+        #expect(!restarted.prepareIfNeeded())
+        #expect(try !restarted.finalizeIfNeeded(modelContainer: container))
+        #expect(restarted.completedRecord() == completed)
+    }
+
+    @Test func corruptPrimaryAndBackupNeverResetCutover() {
+        let defaults = makeDefaults()
+        setLegacyTotals(sessions: 6, words: 60, duration: 6, in: defaults)
+        let corrupt = Data("corrupt".utf8)
+        defaults.set(corrupt, forKey: "LegacyStatsCarryForward.State.v1")
+        defaults.set(corrupt, forKey: "LegacyStatsCarryForward.StateBackup.v1")
+        let service = makeService(defaults: defaults, now: Date(timeIntervalSince1970: 9_999))
+
+        #expect(!service.prepareIfNeeded())
+        #expect(service.pendingSnapshot() == nil)
+        #expect(service.completedRecord() == nil)
+        #expect(defaults.data(forKey: "LegacyStatsCarryForward.State.v1") == corrupt)
+        #expect(defaults.data(forKey: "LegacyStatsCarryForward.StateBackup.v1") == corrupt)
+    }
+
+    @Test func historicalSummaryWithoutStoredCountRemainsDecodable() throws {
+        var summary = DashboardStatsSummary()
+        summary.totalCount = 42
+        summary.totalWords = 420
+        let data = try JSONEncoder().encode(summary)
+        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        json.removeValue(forKey: "sessionMetricCount")
+        let oldData = try JSONSerialization.data(withJSONObject: json)
+        let decoded = try JSONDecoder().decode(DashboardStatsSummary.self, from: oldData)
+
+        #expect(decoded.sessionMetricCount == nil)
+        #expect(decoded.storedSessionMetricCount == 42)
+        #expect(decoded.totalWords == 420)
+    }
+
     @Test func repeatedFinalizeIsANoOp() throws {
         let defaults = makeDefaults()
         setLegacyTotals(sessions: 4, words: 40, duration: 4, in: defaults)

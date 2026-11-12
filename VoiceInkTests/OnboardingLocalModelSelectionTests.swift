@@ -16,6 +16,16 @@ struct OnboardingLocalModelSelectionTests {
         #expect(coordinator.selectedOnboardingTranscriptionModelName == "ggml-large-v3")
     }
 
+    @Test func preservesPreviouslySelectedExperimentalQwenModel() {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(TranscribeCppModelCatalog.qwen3ASR1_7B.modelName, forKey: "CurrentTranscriptionModel")
+
+        let coordinator = OnboardingCoordinator(defaults: defaults)
+
+        #expect(coordinator.selectedLocalTranscriptionModel?.name == TranscribeCppModelCatalog.qwen3ASR1_7B.modelName)
+    }
+
     @Test func freshInstallDefaultsToParakeetV3() {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
