@@ -1,0 +1,25 @@
+name: Import verified upstream history
+on:
+  push:
+    branches: ['ci/import-upstream-v2.27']
+    paths: ['.github/workflows/import-upstream-v2.27.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import:
+    if: github.repository == 'AaronJny/VoiceInk' && github.ref == 'refs/heads/ci/import-upstream-v2.27'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Fetch and verify official release ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags https://github.com/Beingpax/VoiceInk.git refs/tags/v2.27
+          actual=$(git rev-parse FETCH_HEAD^{commit})
+          test "$actual" = b5d1be9a7c7377dd059f37bb3e0f791b802d4001
+          git fsck --no-reflogs
+          git push origin "$actual:refs/heads/vendor/upstream-v2.27"
