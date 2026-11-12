@@ -9,7 +9,7 @@
 - 官方 Whisper v1.9.2 XCFramework 的 SHA-256 固定为 `af74fed13ea7f2d5ca2a39d9f58ec177713fafd7cab63aef4e27b79f3ceca80b`。版本与 digest 源自官方 release API，不依赖本机已有框架。
 - 构建/测试使用 `LOCAL_BUILD`，不接入 CloudKit。CI 不上传用户数据、真实音频或 ASR 模型，且不运行无输入会空通过的 `ASRBenchmarkTests`。
 - 现有 Secret：`SIGNING_CERTIFICATE_P12_BASE64`、`SIGNING_CERTIFICATE_PASSWORD`；变量 `SIGNING_IDENTITY_SHA1` 必须与交接原身份完全一致。
-- 临时钥匙串仅在签名步骤存在。先核对原证书 SHA-1 和 SHA-256，再仅在临时 runner 的 admin 域授予该证书 codeSign 用途信任，公有证书加入 runner 的 System 钥匙串，私钥只在临时钥匙串；不授予其他用途信任。临时钥匙串加入搜索列表后才能被 codesign 使用。EXIT 与 always 清理精确移除该指纹的信任项并读回验证，保留无关信任项，再删除公有证书、恢复搜索列表并删除私钥钥匙串。不修改用户 Mac，不创建替代证书，不回退 ad-hoc。
+- 临时钥匙串仅在签名步骤存在。先核对原证书 SHA-1/SHA-256，私钥留在临时钥匙串；仅在一次性 runner 中授予原证书 codeSign 用途信任。签名后删除私钥钥匙串和公有证书、恢复搜索列表，剩余信任记录随 GitHub 托管一次性环境销毁；元数据记录实际方式，不声称手工删除信任记录。不修改用户 Mac，不创建替代证书，不回退 ad-hoc。签名使用标准 `macos-15-intel` 池，仍严格验证输入产物为 ARM64；编译继续使用 Xcode 26.6 ARM64。
 - build 成功后将测试前的干净 app 以 ditto 封为 `UNSIGNED-VoiceInk-arm64.zip` 中间工件，明确不可直接安装，保留 3 天。附源码 commit、run ID、构建配置、工具链、测试摘要及 SHA-256。sign 仅下载同一 run 工件，校验后签名。失败时仅重跑 sign job，无需重复全量编译；中间工件过期后需重跑 build。
 - 在测试前暂存干净 app，不把测试注入的 .xctest 交付给用户。从内向外签名、逐个可执行文件核对证书指纹，并验证主包 entitlements、生产 ID 与 designated requirement。zip 使用 `ditto`，解压后重做签名核验。
 - 应用工件包含 zip、`build-info.json` 与工具链信息。日志和 xcresult 在独立诊断工件中，保留 7 天；应用保留 14 天。
@@ -30,3 +30,5 @@
 SPM key 按实际 runner 架构、Xcode/Swift/SDK 和 Package.resolved 隔离；编译 key 另含配置、xcconfig、项目、entitlements、构建脚本及含 Whisper 摘要的准备脚本。保存 key 追加源码 commit，只在相同依赖/工具链前缀恢复；Xcode仍自行判定源码增量，所有构建继续锁定依赖。PR只恢复、不保存，只有受信本仓 push 可以保存。
 
 工作流单独显示生产 app 编译与七组测试。`cache-status.json` 记录精确/前缀命中，`stage-timings.json` 和 job summary 记录实际阶段耗时。warm-restored 只代表缓存已恢复，不承诺全部目标免编译；冷/热收益必须比较实际运行。官方 cache v4.2.3 commit 已核验： https://api.github.com/repos/actions/cache/git/ref/tags/v4.2.3
+
+实测冷构建（2026-11-12，c6e012）：3 CPU / 7 GiB，Release 编译 908 秒，49 项测试 49 秒；两层缓存均成功保存。未单独追加热构建测量。

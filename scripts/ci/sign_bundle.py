@@ -63,7 +63,9 @@ def verify(app):
     for key, value in expected_entitlements.items():
         assert entitlements.get(key) == value, (key, entitlements.get(key))
     assert not any('icloud' in k.lower() for k in entitlements), entitlements
-    requirement = run('codesign', '-dr', '-', str(app)).stderr.decode()
+    requirement_output = run('codesign', '-dr', '-', str(app))
+    requirement = '\n'.join(line for line in (requirement_output.stdout + requirement_output.stderr).decode().splitlines() if line.startswith('designated =>'))
+    assert requirement, 'Missing designated requirement output'
     assert IDENTITY.lower() in requirement.lower(), requirement
     return info, rows, entitlements, requirement
 
@@ -84,7 +86,7 @@ with tempfile.TemporaryDirectory() as tmp:
     run('ditto', '-x', '-k', str(archive), tmp)
     verify(Path(tmp) / APP.name)
 metadata = {
-    'commit': sha, 'version': info['CFBundleShortVersionString'], 'build': info['CFBundleVersion'],
+    'commit': sha, 'packagingCommit': os.environ.get('VOICEINK_PACKAGING_COMMIT', sha), 'signingRunId': os.environ.get('GITHUB_RUN_ID'), 'version': info['CFBundleShortVersionString'], 'build': info['CFBundleVersion'],
     'bundleIdentifier': info['CFBundleIdentifier'], 'architecture': 'arm64',
     'certificateSHA1': IDENTITY, 'designatedRequirement': requirement.strip(),
     'entitlements': entitlements, 'signedCode': rows,
