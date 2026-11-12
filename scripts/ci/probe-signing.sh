@@ -8,12 +8,23 @@ expected=24F8BA788091EF77E65B03212711783CF66232C6
 [[ -n "${SIGNING_CERTIFICATE_P12_BASE64:-}" && -n "${SIGNING_CERTIFICATE_PASSWORD:-}" ]] || { echo 'Signing secrets are missing.' >&2; exit 1; }
 keychain="$RUNNER_TEMP/voiceink-signing.keychain-db"
 p12="$RUNNER_TEMP/voiceink-signing.p12"
+bounded_security() {
+  python3 - "$@" <<'PY'
+import subprocess,sys
+subprocess.run(sys.argv[1:],check=True,timeout=45)
+PY
+}
 cleanup() {
+  rc=$?
+  trap - EXIT
+  echo 'Removing scoped trust and public certificate from this ephemeral runner.'
   if [[ -f "$RUNNER_TEMP/voiceink-signing.cer" ]]; then
-    sudo -n security remove-trusted-cert -d "$RUNNER_TEMP/voiceink-signing.cer" >/dev/null 2>&1 || true
+    bounded_security sudo -n security remove-trusted-cert -d "$RUNNER_TEMP/voiceink-signing.cer" || rc=1
+    bounded_security sudo -n security delete-certificate -Z "$expected" /Library/Keychains/System.keychain || rc=1
   fi
   security delete-keychain "$keychain" > /dev/null 2>&1 || true
   rm -f "$p12" "$RUNNER_TEMP/voiceink-signing.cer"
+  exit "$rc"
 }
 trap cleanup EXIT
 password=$(openssl rand -hex 32)
@@ -45,10 +56,7 @@ actual_sha256=$(openssl x509 -in "$cert" -noout -fingerprint -sha256 | cut -d= -
 [[ "$actual_sha1" == "$expected" ]]
 [[ "$actual_sha256" == 0D8A10DA627B134F22C2B6AB7FB2D7CFE5E4A0B462D6BC2FF0C437F2013D7129 ]]
 echo 'Adding temporary admin-domain codeSign-only trust for the exact original certificate.'
-python3 - "$keychain" "$cert" <<'PY'
-import subprocess,sys
-subprocess.run(['sudo','-n','security','add-trusted-cert','-d','-r','trustRoot','-p','codeSign','-k',sys.argv[1],sys.argv[2]],check=True,timeout=90)
-PY
+bounded_security sudo -n security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$cert"
 echo 'Scoped trust added; signing the probe.'
 security find-identity -v -p codesigning "$keychain" | grep -F "$expected"
 export VOICEINK_SIGNING_KEYCHAIN="$keychain"

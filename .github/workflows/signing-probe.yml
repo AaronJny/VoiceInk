@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - name: Try original certificate without changing trust
+      - name: Verify original signer with approved ephemeral codeSign trust
         env:
           SIGNING_CERTIFICATE_P12_BASE64: ${{ secrets.SIGNING_CERTIFICATE_P12_BASE64 }}
           SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
