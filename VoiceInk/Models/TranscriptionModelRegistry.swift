@@ -85,6 +85,17 @@ enum TranscriptionModelRegistry {
                 publisher: "Cohere",
                 supportedLanguages: LanguageDictionary.cohereTranscribe
             ),
+            TranscribeCppModel(
+                name: "qwen3-asr-1.7b-q5-k-m",
+                displayName: "Qwen3-ASR 1.7B (Q5)",
+                description: "Experimental multilingual transcription optimized for Chinese and English",
+                size: "1.52 GB",
+                speed: 0.9,
+                accuracy: 0.96,
+                ramUsage: 2.5,
+                publisher: "Qwen",
+                supportedLanguages: LanguageDictionary.qwen3ASR
+            ),
 
             // Local Models
             WhisperModel(

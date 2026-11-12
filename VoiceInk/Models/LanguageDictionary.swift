@@ -134,6 +134,15 @@ enum LanguageDictionary {
         "ar", "de", "el", "en", "es", "fr", "it", "ja", "ko", "nl", "pl", "pt", "vi", "zh",
     ])
 
+    static let qwen3ASR = forCodes(
+        [
+            "zh", "en", "yue", "ar", "de", "fr", "es", "pt", "id", "it",
+            "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl", "sv",
+            "da", "fi", "pl", "cs", "fil", "fa", "el", "ro", "hu", "mk",
+        ],
+        includesAutoDetect: true
+    )
+
     private static func languages(matching codes: Set<String>) -> [String: String] {
         all.filter { codes.contains($0.key) }
     }

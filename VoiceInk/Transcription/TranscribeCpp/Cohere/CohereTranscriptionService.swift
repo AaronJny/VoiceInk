@@ -106,7 +106,7 @@ final class CohereTranscriptionService: TranscriptionService, @unchecked Sendabl
         defer { releaseModel(named: transcribeCppModel.name) }
 
         let samples = try audioConverter.resampleAudioFile(audioURL)
-        let language = selectedLanguage(context.language, for: transcribeCppModel)
+        let language = Self.selectedLanguage(context.language, for: transcribeCppModel)
         let options = RunOptions(timestamps: .none, language: language)
         let chunks = samples.energyAwareChunks(
             maximumCount: artifact.maximumChunkSeconds * 16_000,
@@ -115,7 +115,7 @@ final class CohereTranscriptionService: TranscriptionService, @unchecked Sendabl
         )
 
         let startedAt = ContinuousClock.now
-        var texts: [String] = []
+        var texts: [(text: String, language: String?)] = []
         texts.reserveCapacity(chunks.count)
 
         for chunk in chunks {
@@ -124,14 +124,18 @@ final class CohereTranscriptionService: TranscriptionService, @unchecked Sendabl
             let transcript = try await session.run(chunk, options: options)
             let text = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty {
-                texts.append(text)
+                texts.append((text, transcript.language ?? language))
             }
         }
 
         logger.notice(
             "\(transcribeCppModel.displayName, privacy: .public) completed in \(startedAt.duration(to: .now).formatted(.units(allowed: [.seconds], width: .narrow)), privacy: .public) for \(samples.count, privacy: .public) samples"
         )
-        return TextNormalizer.shared.normalizeSentence(texts.joined(separator: languageUsesSpaces(language) ? " " : ""))
+        let joinedText = Self.joinTexts(texts)
+        if artifact.modelName == TranscribeCppModelCatalog.cohereTranscribe.modelName {
+            return TextNormalizer.shared.normalizeSentence(joinedText)
+        }
+        return joinedText
     }
 
     func cleanup() {
@@ -289,25 +293,38 @@ final class CohereTranscriptionService: TranscriptionService, @unchecked Sendabl
     }
 
     private func resolveArtifact(for model: TranscribeCppModel) throws -> TranscribeCppModelArtifact {
-        guard let artifact = TranscribeCppModelCatalog.artifact(for: model.name),
-            artifact.modelName == TranscribeCppModelCatalog.cohereTranscribe.modelName
-        else {
+        guard let artifact = TranscribeCppModelCatalog.artifact(for: model.name) else {
             throw NSError(
                 domain: "CohereTranscriptionService",
                 code: -2,
-                userInfo: [NSLocalizedDescriptionKey: "Unsupported Cohere transcription model"]
+                userInfo: [NSLocalizedDescriptionKey: "Unsupported transcribe.cpp model"]
             )
         }
         return artifact
     }
 
-    private func selectedLanguage(_ language: String?, for model: TranscribeCppModel) -> String {
+    static func selectedLanguage(_ language: String?, for model: TranscribeCppModel) -> String? {
         let compatibleLanguage = TranscriptionLanguageSupport.validLanguageOrFallback(language, for: model)
-        return compatibleLanguage.split(separator: "-").first.map(String.init)?.lowercased() ?? "en"
+        guard compatibleLanguage != "auto" else { return nil }
+        return compatibleLanguage.split(separator: "-").first.map(String.init)?.lowercased()
     }
 
-    private func languageUsesSpaces(_ language: String) -> Bool {
-        language != "ja" && language != "zh"
+    static func languageUsesSpaces(_ language: String?) -> Bool {
+        guard let language else { return true }
+        return !["ja", "th", "yue", "zh"].contains(language)
+    }
+
+    static func joinTexts(_ chunks: [(text: String, language: String?)]) -> String {
+        chunks.enumerated().reduce(into: "") { result, element in
+            let (index, chunk) = element
+            if index > 0 {
+                let previousLanguage = chunks[index - 1].language
+                if languageUsesSpaces(previousLanguage), languageUsesSpaces(chunk.language) {
+                    result.append(" ")
+                }
+            }
+            result.append(chunk.text)
+        }
     }
 
     private static func initializeBackendsIfNeeded() throws {

@@ -198,7 +198,9 @@ class ImportExportService {
             wordReplacements: exportedWordReplacements,
             generalSettings: generalSettingsToExport,
             customEmojis: emojiManager.customEmojis,
-            customCloudModels: customModels
+            customCloudModels: customModels,
+            ollamaServers: enhancementService.getAIService()?.ollamaServers,
+            defaultOllamaServerID: enhancementService.getAIService()?.defaultOllamaServerID
         )
 
         let encoder = JSONEncoder()

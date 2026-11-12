@@ -86,7 +86,11 @@ class AIEnhancementService: ObservableObject {
 
         guard configuration.prompt != nil else { return false }
 
-        if provider == .localCLI || provider == .ollama {
+        if provider == .ollama {
+            return configuration.ollamaServerID != nil && configuration.ollamaBaseURL != nil
+        }
+
+        if provider == .localCLI {
             return true
         }
 
@@ -207,11 +211,12 @@ class AIEnhancementService: ObservableObject {
                 let filteredResult = AIEnhancementOutputFilter.filter(
                     result.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
-                guard !filteredResult.isEmpty else {
+                let normalizedResult = MixedScriptTypographyNormalizer.normalize(filteredResult)
+                guard !normalizedResult.isEmpty else {
                     throw EnhancementError.enhancementFailed
                 }
                 return (
-                    filteredResult,
+                    normalizedResult,
                     nil,
                     text
                 )
@@ -236,10 +241,14 @@ class AIEnhancementService: ObservableObject {
 
         if provider == .ollama {
             do {
+                guard let baseURL = configuration.ollamaBaseURL else {
+                    throw LocalAIError.invalidURL
+                }
                 let result = try await aiService.enhanceWithOllama(
                     text: formattedText,
                     systemPrompt: systemMessage,
                     model: modelName,
+                    baseURL: baseURL,
                     timeout: baseTimeout
                 )
                 return (

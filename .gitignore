@@ -13,6 +13,10 @@ xcuserdata/
 *.dSYM.zip
 *.dSYM
 
+## Code-signing identities (certificate and private key)
+*.p12
+*.pfx
+
 ## Playgrounds
 timeline.xctimeline
 playground.xcworkspace
@@ -33,6 +37,7 @@ playground.xcworkspace
 build/
 .local-build/
 .local-dependencies/
+.slim/deepwork/
 
 # CocoaPods
 #

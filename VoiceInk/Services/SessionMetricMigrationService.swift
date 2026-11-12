@@ -31,26 +31,28 @@ final class SessionMetricMigrationService {
             var insertedCount = 0
 
             do {
-                let existingIds = Set(
-                    try backgroundContext.fetch(FetchDescriptor<SessionMetric>())
-                        .map { $0.transcriptionId }
-                )
+                try SessionMetricWriteCoordinator.withLock {
+                    let existingIds = Set(
+                        try backgroundContext.fetch(FetchDescriptor<SessionMetric>())
+                            .map { $0.transcriptionId }
+                    )
 
-                let descriptor = FetchDescriptor<Transcription>(
-                    predicate: #Predicate<Transcription> { $0.transcriptionStatus == "completed" }
-                )
-                let transcriptions = try backgroundContext.fetch(descriptor)
+                    let descriptor = FetchDescriptor<Transcription>(
+                        predicate: #Predicate<Transcription> { $0.transcriptionStatus == "completed" }
+                    )
+                    let transcriptions = try backgroundContext.fetch(descriptor)
 
-                for transcription in transcriptions {
-                    guard !existingIds.contains(transcription.id) else { continue }
+                    for transcription in transcriptions {
+                        guard !existingIds.contains(transcription.id) else { continue }
 
-                    let metric = Self.makeSessionMetric(from: transcription)
-                    backgroundContext.insert(metric)
-                    insertedCount += 1
-                }
+                        let metric = Self.makeSessionMetric(from: transcription)
+                        backgroundContext.insert(metric)
+                        insertedCount += 1
+                    }
 
-                if insertedCount > 0 {
-                    try backgroundContext.save()
+                    if insertedCount > 0 {
+                        try backgroundContext.save()
+                    }
                 }
 
                 UserDefaults.standard.set(true, forKey: completionKey)

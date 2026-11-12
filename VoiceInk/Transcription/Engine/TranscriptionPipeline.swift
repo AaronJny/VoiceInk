@@ -241,22 +241,25 @@ class TranscriptionPipeline {
         }
 
         func saveTranscriptionAndPostCompletion() {
-            var didInsertSessionMetric = false
-
-            if transcription.transcriptionStatus == TranscriptionStatus.completed.rawValue {
-                do {
-                    didInsertSessionMetric = try SessionMetricRecorder.recordRecorderSession(
-                        transcription: transcription,
-                        model: model,
-                        in: modelContext
-                    )
-                } catch {
-                    logger.error("Failed to record session metric: \(error, privacy: .public)")
-                }
-            }
-
             do {
-                try modelContext.save()
+                let didInsertSessionMetric = try SessionMetricWriteCoordinator.withLock {
+                    var didInsert = false
+                    if transcription.transcriptionStatus == TranscriptionStatus.completed.rawValue {
+                        do {
+                            didInsert = try SessionMetricRecorder.recordRecorderSession(
+                                transcription: transcription,
+                                model: model,
+                                in: modelContext
+                            )
+                        } catch {
+                            logger.error("Failed to record session metric: \(error, privacy: .public)")
+                        }
+                    }
+
+                    try modelContext.save()
+                    return didInsert
+                }
+
                 if didInsertSessionMetric {
                     NotificationCenter.default.post(name: .sessionMetricsDidChange, object: nil)
                 }

@@ -78,8 +78,22 @@ enum TranscribeCppModelCatalog {
         boundaryEnergyWindowSamples: 1_600
     )
 
+    static let qwen3ASR1_7B = TranscribeCppModelArtifact(
+        modelName: "qwen3-asr-1.7b-q5-k-m",
+        fileName: "Qwen3-ASR-1.7B-Q5_K_M.gguf",
+        repository: "handy-computer/Qwen3-ASR-1.7B-gguf",
+        repositoryRevision: "92282af1610a2db19d66f2bef1e260f5deca782d",
+        expectedFileSize: 1_517_290_464,
+        expectedSHA256: "034c557fe92ff8fcd9a9c041cbdaad347be0a86a58d3a348f63cf3f0180879d0",
+        architectureHint: "qwen3_asr",
+        maximumChunkSeconds: 35,
+        boundarySearchSeconds: 5,
+        boundaryEnergyWindowSamples: 1_600
+    )
+
     private static let artifactsByModelName = [
-        cohereTranscribe.modelName: cohereTranscribe
+        cohereTranscribe.modelName: cohereTranscribe,
+        qwen3ASR1_7B.modelName: qwen3ASR1_7B,
     ]
 
     static func artifact(for modelName: String) -> TranscribeCppModelArtifact? {

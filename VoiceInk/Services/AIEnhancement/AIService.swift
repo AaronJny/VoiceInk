@@ -190,12 +190,12 @@ struct OllamaRefreshResult {
 class AIService: ObservableObject {
     @Published var apiKey: String = ""
     @Published var isAPIKeyValid: Bool = false
-    @Published var customBaseURL: String = UserDefaults.standard.string(forKey: "customProviderBaseURL") ?? "" {
+    @Published var customBaseURL: String {
         didSet {
             userDefaults.set(customBaseURL, forKey: "customProviderBaseURL")
         }
     }
-    @Published var customModel: String = UserDefaults.standard.string(forKey: "customProviderModel") ?? "" {
+    @Published var customModel: String {
         didSet {
             userDefaults.set(customModel, forKey: "customProviderModel")
         }
@@ -231,9 +231,9 @@ class AIService: ObservableObject {
     }
 
     @Published private var selectedModels: [AIProvider: String] = [:]
-    private let userDefaults = UserDefaults.standard
+    private let userDefaults: UserDefaults
     let voiceInkRefineService = VoiceInkRefineService.shared
-    private lazy var ollamaService = OllamaService()
+    private let ollamaService: OllamaService
     private lazy var localCLIService = LocalCLIService()
     private var apiKeyChangeObserver: NSObjectProtocol?
     private var voiceInkRefineObserver: AnyCancellable?
@@ -241,7 +241,7 @@ class AIService: ObservableObject {
     @Published private var openRouterModels: [String] = []
     @Published private(set) var isOllamaRefreshing = false
 
-    var connectedProviders: [AIProvider] {
+    var configuredProviders: [AIProvider] {
         AIProvider.allCases.filter { provider in
             guard provider.supportsEnhancement else {
                 return false
@@ -252,7 +252,7 @@ class AIService: ObservableObject {
             } else if provider == .voiceInkRefine {
                 return voiceInkRefineService.isAvailableInModes
             } else if provider == .ollama {
-                return ollamaService.isConnected
+                return !ollamaService.servers.isEmpty
             } else if provider == .localCLI {
                 return localCLIService.isConfigured
             } else if provider.requiresAPIKey {
@@ -262,9 +262,30 @@ class AIService: ObservableObject {
         }
     }
 
+    var connectedProviders: [AIProvider] {
+        configuredProviders.filter { provider in
+            if provider == .ollama {
+                return ollamaService.serverStatuses.values.contains(where: \.isConnected)
+            }
+            return true
+        }
+    }
+
+    var ollamaServers: [OllamaServerConfiguration] {
+        ollamaService.servers
+    }
+
+    var defaultOllamaServerID: UUID? {
+        ollamaService.defaultServerID
+    }
+
     var currentModel: String {
         if selectedProvider == .voiceInkRefine {
             return selectedProvider.defaultModel
+        }
+
+        if selectedProvider == .ollama {
+            return ollamaService.selectedModel
         }
 
         if let selectedModel = selectedModels[selectedProvider],
@@ -279,6 +300,10 @@ class AIService: ObservableObject {
     func selectedModel(for provider: AIProvider) -> String {
         if provider == .voiceInkRefine {
             return provider.defaultModel
+        }
+
+        if provider == .ollama {
+            return ollamaService.selectedModel
         }
 
         if let selectedModel = selectedModels[provider], !selectedModel.isEmpty {
@@ -305,7 +330,7 @@ class AIService: ObservableObject {
 
     func availableModels(for provider: AIProvider) -> [String] {
         if provider == .ollama {
-            return ollamaService.availableModels.map { $0.name }
+            return ollamaService.modelNames(forServerID: nil)
         } else if provider == .openRouter {
             return openRouterModels
         } else if provider == .custom {
@@ -314,7 +339,15 @@ class AIService: ObservableObject {
         return provider.availableModels
     }
 
-    init() {
+    init(
+        userDefaults: UserDefaults = .standard,
+        ollamaService: OllamaService? = nil
+    ) {
+        self.userDefaults = userDefaults
+        self.ollamaService = ollamaService ?? OllamaService(userDefaults: userDefaults)
+        self.customBaseURL = userDefaults.string(forKey: "customProviderBaseURL") ?? ""
+        self.customModel = userDefaults.string(forKey: "customProviderModel") ?? ""
+
         if userDefaults.string(forKey: "selectedAIProvider") == "GROQ" {
             userDefaults.set("Groq", forKey: "selectedAIProvider")
         }
@@ -556,6 +589,63 @@ class AIService: ObservableObject {
         NotificationCenter.default.post(name: .aiProviderKeyChanged, object: nil)
     }
 
+    func ollamaServerConfiguration(id: UUID?) -> OllamaServerConfiguration? {
+        ollamaService.server(withID: id)
+    }
+
+    func ollamaServerStatus(id: UUID) -> OllamaServerStatus {
+        ollamaService.status(forServerID: id)
+    }
+
+    func availableOllamaModels(serverID: UUID?) -> [String] {
+        ollamaService.modelNames(forServerID: serverID)
+    }
+
+    @discardableResult
+    func addOllamaServer(name: String, baseURL: String, preferredModel: String = "")
+        -> OllamaServerConfiguration
+    {
+        let server = ollamaService.addServer(
+            name: name, baseURL: baseURL, preferredModel: preferredModel)
+        notifyOllamaConfigurationChanged()
+        return server
+    }
+
+    func addOllamaServer(_ server: OllamaServerConfiguration) {
+        ollamaService.addServer(server)
+        notifyOllamaConfigurationChanged()
+    }
+
+    func updateOllamaServer(_ server: OllamaServerConfiguration) {
+        ollamaService.updateServer(server)
+        notifyOllamaConfigurationChanged()
+    }
+
+    func setPreferredOllamaModel(_ model: String, serverID: UUID) {
+        ollamaService.setPreferredModel(model, forServerID: serverID)
+        notifyOllamaConfigurationChanged()
+    }
+
+    func removeOllamaServer(id: UUID) {
+        ollamaService.removeServer(withID: id)
+        notifyOllamaConfigurationChanged()
+    }
+
+    func setDefaultOllamaServer(id: UUID) {
+        ollamaService.setDefaultServer(withID: id)
+        notifyOllamaConfigurationChanged()
+    }
+
+    func replaceOllamaServers(_ servers: [OllamaServerConfiguration], defaultServerID: UUID?) {
+        ollamaService.replaceServers(servers, defaultServerID: defaultServerID)
+        notifyOllamaConfigurationChanged()
+    }
+
+    private func notifyOllamaConfigurationChanged() {
+        objectWillChange.send()
+        NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
+    }
+
     func checkOllamaConnection(completion: @escaping (Bool) -> Void) {
         Task { [weak self] in
             guard let self = self else { return }
@@ -569,6 +659,29 @@ class AIService: ObservableObject {
     func fetchOllamaModels() async -> [OllamaModel] {
         let result = await refreshOllamaAvailability()
         return result.models
+    }
+
+    @MainActor
+    func refreshOllamaServer(id: UUID) async -> OllamaRefreshResult {
+        let result = await ollamaService.refresh(serverID: id)
+        notifyOllamaConfigurationChanged()
+        switch result {
+        case .success(let models):
+            return OllamaRefreshResult(models: models, errorMessage: nil)
+        case .failure(let error):
+            let cachedModels = ollamaService.fetchedModelsByServerID[id] ?? []
+            return OllamaRefreshResult(models: cachedModels, errorMessage: ollamaErrorMessage(for: error))
+        }
+    }
+
+    @MainActor
+    func refreshAllOllamaServers() async {
+        isOllamaRefreshing = true
+        defer {
+            isOllamaRefreshing = false
+            notifyOllamaConfigurationChanged()
+        }
+        await ollamaService.refreshAllServers()
     }
 
     func refreshOllamaAvailabilityInBackground() {
@@ -602,7 +715,10 @@ class AIService: ObservableObject {
         case .success(let models):
             return OllamaRefreshResult(models: models, errorMessage: nil)
         case .failure(let error):
-            return OllamaRefreshResult(models: [], errorMessage: ollamaErrorMessage(for: error))
+            return OllamaRefreshResult(
+                models: ollamaService.availableModels,
+                errorMessage: ollamaErrorMessage(for: error)
+            )
         }
     }
 
@@ -651,10 +767,44 @@ class AIService: ObservableObject {
         }
     }
 
-    func enhanceWithOllama(text: String, systemPrompt: String, model: String? = nil, timeout: TimeInterval = 30)
-        async throws -> String
-    {
-        try await ollamaService.enhance(text, withSystemPrompt: systemPrompt, model: model, timeout: timeout)
+    func enhanceWithOllama(
+        text: String,
+        systemPrompt: String,
+        model: String? = nil,
+        timeout: TimeInterval = 30
+    ) async throws -> String {
+        guard let server = ollamaService.defaultServer,
+            let baseURL = URL(string: server.baseURL)
+        else {
+            throw LocalAIError.invalidURL
+        }
+        return try await enhanceWithOllama(
+            text: text,
+            systemPrompt: systemPrompt,
+            model: model,
+            baseURL: baseURL,
+            timeout: timeout
+        )
+    }
+
+    func enhanceWithOllama(
+        text: String,
+        systemPrompt: String,
+        model: String? = nil,
+        baseURL: URL,
+        timeout: TimeInterval = 30
+    ) async throws -> String {
+        try await ollamaService.enhance(
+            text,
+            withSystemPrompt: systemPrompt,
+            model: model,
+            baseURL: baseURL,
+            timeout: timeout
+        )
+    }
+
+    func prewarmOllama(model: String, baseURL: URL, timeout: TimeInterval = 60) async throws {
+        try await ollamaService.preload(model: model, baseURL: baseURL, timeout: timeout)
     }
 
     func enhanceWithVoiceInkRefine(transcript: String) async throws -> String {
@@ -664,11 +814,13 @@ class AIService: ObservableObject {
     func updateOllamaBaseURL(_ newURL: String) {
         ollamaService.baseURL = newURL
         userDefaults.set(newURL, forKey: "ollamaBaseURL")
+        notifyOllamaConfigurationChanged()
     }
 
     func updateSelectedOllamaModel(_ modelName: String) {
         ollamaService.selectedModel = modelName
         userDefaults.set(modelName, forKey: "ollamaSelectedModel")
+        notifyOllamaConfigurationChanged()
     }
 
     func loadLocalCLITemplate(_ template: LocalCLITemplate) {

@@ -5,7 +5,7 @@ FRAMEWORK_PATH := $(WHISPER_CPP_DIR)/build-apple/whisper.xcframework
 LOCAL_DERIVED_DATA := $(CURDIR)/.local-build
 LOCAL_CODESIGN_IDENTITY ?=
 
-.PHONY: all clean whisper setup build local check healthcheck help dev run release release-setup
+.PHONY: all clean whisper setup build local local-clean check healthcheck help dev run release release-setup
 
 # Default target
 all: check build
@@ -48,7 +48,6 @@ build: setup
 # Build locally with stable Apple Development signing when available.
 local: check setup
 	@echo "Building VoiceInk for local use (no Apple Developer certificate required)..."
-	@rm -rf "$(LOCAL_DERIVED_DATA)"
 	@SIGNING_IDENTITY="$(LOCAL_CODESIGN_IDENTITY)"; \
 	if [ -z "$$SIGNING_IDENTITY" ]; then \
 		SIGNING_IDENTITIES=$$(security find-identity -v -p codesigning 2>/dev/null | awk '/"Apple Development: / { print $$2 }'); \
@@ -68,8 +67,12 @@ local: check setup
 		echo "Using ad-hoc signing (permissions may need approval after rebuilds)"; \
 	fi; \
 	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug \
+		-quiet \
 		-derivedDataPath "$(LOCAL_DERIVED_DATA)" \
 		-xcconfig LocalBuild.xcconfig \
+		-skipMacroValidation \
+		-skipPackageUpdates \
+		-onlyUsePackageVersionsFromResolvedFile \
 		CODE_SIGN_IDENTITY="$$SIGNING_IDENTITY" \
 		CODE_SIGNING_REQUIRED="$$SIGNING_REQUIRED" \
 		CODE_SIGNING_ALLOWED=YES \
@@ -79,6 +82,10 @@ local: check setup
 		build
 	@APP_PATH="$(LOCAL_DERIVED_DATA)/Build/Products/Debug/VoiceInk.app" && \
 	if [ -d "$$APP_PATH" ]; then \
+		if [ -n "$(LOCAL_CODESIGN_IDENTITY)" ] && [ "$(LOCAL_CODESIGN_IDENTITY)" != "-" ]; then \
+			codesign --force --deep --sign "$(LOCAL_CODESIGN_IDENTITY)" \
+				--preserve-metadata=entitlements,requirements,flags,runtime "$$APP_PATH"; \
+		fi; \
 		echo "Copying VoiceInk.app to ~/Downloads..."; \
 		rm -rf "$$HOME/Downloads/VoiceInk.app"; \
 		ditto "$$APP_PATH" "$$HOME/Downloads/VoiceInk.app"; \
@@ -94,6 +101,9 @@ local: check setup
 		echo "Error: Could not find built VoiceInk.app at $$APP_PATH"; \
 		exit 1; \
 	fi
+
+local-clean:
+	@rm -rf "$(LOCAL_DERIVED_DATA)"
 
 # Run application
 run:
@@ -138,6 +148,7 @@ help:
 	@echo "  setup              Copy whisper XCFramework to VoiceInk project"
 	@echo "  build              Build the VoiceInk Xcode project"
 	@echo "  local              Build locally with stable signing when available"
+	@echo "  local-clean        Remove local DerivedData before a clean rebuild"
 	@echo "    LOCAL_CODESIGN_IDENTITY=<SHA or name> overrides automatic Apple Development detection"
 	@echo "  run                Launch the built VoiceInk app"
 	@echo "  dev                Build and run the app (for development)"

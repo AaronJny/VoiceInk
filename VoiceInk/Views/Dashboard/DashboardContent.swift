@@ -249,7 +249,8 @@ struct DashboardContent: View {
     }
 
     private var shouldRefreshStatsAfterMetricChange: Bool {
-        !hasLoadedStatsSnapshot || statsSummary.totalCount < Self.automaticStatsRefreshMetricLimit
+        !hasLoadedStatsSnapshot
+            || statsSummary.storedSessionMetricCount < Self.automaticStatsRefreshMetricLimit
     }
 
     private var insightsActionTitle: LocalizedStringKey {

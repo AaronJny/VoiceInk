@@ -39,6 +39,15 @@ enum BackupImporter {
             )
         }
 
+        if !categories.isDisjoint(with: [.general, .modes]),
+            let ollamaServers = backup.ollamaServers
+        {
+            enhancementService.getAIService()?.replaceOllamaServers(
+                ollamaServers,
+                defaultServerID: backup.defaultOllamaServerID
+            )
+        }
+
         if categories.contains(.prompts) {
             enhancementService.customPrompts = backup.customPrompts
             shouldRepairModePromptSelections = true

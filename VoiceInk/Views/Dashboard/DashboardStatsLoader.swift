@@ -2,7 +2,12 @@ import Foundation
 import SwiftData
 
 enum DashboardStatsLoader {
-    static func load(from modelContainer: ModelContainer) async throws -> DashboardStatsSummary {
+    static func load(
+        from modelContainer: ModelContainer,
+        userDefaults: UserDefaults = .standard,
+        now: Date = Date()
+    ) async throws -> DashboardStatsSummary {
+        let carryForwardRecord = LegacyStatsCarryForwardService.completedRecord(in: userDefaults)
         let task = Task.detached(priority: .utility) {
             try Task.checkCancellation()
 
@@ -55,7 +60,7 @@ enum DashboardStatsLoader {
             var allTimePeakHours: [Int: DashboardPeakHourAccumulator] = [:]
             var allTimeMonthWords: [Date: Int] = [:]
             var firstMetricDate: Date?
-            let windows = DashboardPeriodWindows()
+            let windows = DashboardPeriodWindows(now: now)
             let now = windows.now
             let calendar = windows.calendar
             var todayProductivity = Self.hourlyProductivityPoints(now: now, calendar: calendar)
@@ -236,7 +241,7 @@ enum DashboardStatsLoader {
                 )
             }()
 
-            return DashboardStatsSummary(
+            var summary = DashboardStatsSummary(
                 totalCount: count,
                 totalWords: words,
                 totalDuration: duration,
@@ -306,6 +311,13 @@ enum DashboardStatsLoader {
                 thisYearPeakHours: Self.peakHoursSummary(from: thisYearPeakHours),
                 allTimePeakHours: Self.peakHoursSummary(from: allTimePeakHours)
             )
+            summary.sessionMetricCount = count
+
+            if let carryForwardRecord {
+                summary = LegacyStatsCarryForwardService.apply(carryForwardRecord, to: summary)
+            }
+
+            return summary
         }
 
         return try await withTaskCancellationHandler {

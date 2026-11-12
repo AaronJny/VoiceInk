@@ -240,6 +240,7 @@ struct DashboardStatsSummary: Codable, Equatable, Sendable {
     var totalCount: Int = 0
     var totalWords: Int = 0
     var totalDuration: TimeInterval = 0
+    var sessionMetricCount: Int?
     var todayCount: Int = 0
     var todayWords: Int = 0
     var todayDuration: TimeInterval = 0
@@ -278,6 +279,10 @@ struct DashboardStatsSummary: Codable, Equatable, Sendable {
 }
 
 extension DashboardStatsSummary {
+    var storedSessionMetricCount: Int {
+        sessionMetricCount ?? totalCount
+    }
+
     var total: DashboardMetricTotals {
         DashboardMetricTotals(count: totalCount, words: totalWords, duration: totalDuration)
     }
@@ -461,6 +466,7 @@ final class DashboardStatsCache: @unchecked Sendable {
     private var summary: DashboardStatsSummary?
     private var snapshotMetadata: DashboardStatsSnapshotStore.Metadata?
     private var isStale = false
+    private var staleGeneration: UInt64 = 0
 
     private init() {}
 
@@ -481,6 +487,9 @@ final class DashboardStatsCache: @unchecked Sendable {
             summary = snapshot.summary
             snapshotMetadata = snapshot.metadata
             isStale = snapshotStore.isMarkedStale()
+            if isStale {
+                staleGeneration &+= 1
+            }
         }
         let current = summary
         lock.unlock()
@@ -495,29 +504,41 @@ final class DashboardStatsCache: @unchecked Sendable {
 
     @discardableResult
     func update(_ summary: DashboardStatsSummary) -> DashboardStatsSnapshotStore.Metadata {
+        lock.lock()
+        let generation = staleGeneration
+        lock.unlock()
+
         let metadata = snapshotStore.saveSummary(summary)
 
         lock.lock()
         self.summary = summary
         self.snapshotMetadata = metadata
-        self.isStale = false
+        if staleGeneration == generation {
+            self.isStale = false
+        }
         lock.unlock()
 
         return metadata
     }
 
     func markStale() {
-        snapshotStore.markStale()
-
         lock.lock()
+        staleGeneration &+= 1
         isStale = true
         lock.unlock()
+
+        snapshotStore.markStale()
     }
 
     func shouldRefreshSnapshotAutomatically() -> Bool {
         lock.lock()
         let metadata = snapshotMetadata
+        let stale = isStale
         lock.unlock()
+
+        if stale || snapshotStore.isMarkedStale() {
+            return true
+        }
 
         guard let metadata else {
             return true

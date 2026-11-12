@@ -62,6 +62,7 @@ final class OnboardingCoordinator: ObservableObject {
     @Published var experienceTextByKind: [OnboardingExperienceKind: String] = [:]
     @Published var isExperienceInIntroPhase = true
     @Published var clearedExperienceShortcutActions: Set<ShortcutAction> = []
+    @Published private(set) var preferredLocalTranscriptionModelName: String?
 
     let defaults: UserDefaults
     var refreshTask: Task<Void, Never>?
@@ -70,6 +71,7 @@ final class OnboardingCoordinator: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.preferredLocalTranscriptionModelName = defaults.string(forKey: "CurrentTranscriptionModel")
         self.storedStage = defaults.string(forKey: OnboardingStorageKeys.stage) ?? OnboardingStage.permissions.rawValue
         self.storedActivePermission =
             defaults.string(forKey: OnboardingStorageKeys.activePermission)
@@ -290,7 +292,7 @@ final class OnboardingCoordinator: ObservableObject {
     var selectedOnboardingTranscriptionModel: (any TranscriptionModel)? {
         switch transcriptionSetupKind {
         case .local:
-            return requiredTranscriptionModel
+            return selectedLocalTranscriptionModel
         case .cloud:
             guard let provider = selectedOnboardingTranscriptionProvider else { return nil }
             return selectedTranscriptionModel(for: provider)
@@ -372,6 +374,40 @@ final class OnboardingCoordinator: ObservableObject {
             .first { $0.name == "parakeet-tdt-0.6b-v3" }
     }
 
+    var selectedLocalTranscriptionModel: (any TranscriptionModel)? {
+        if let preferredLocalTranscriptionModelName,
+            let existingModel = TranscriptionModelRegistry.models.first(where: {
+                $0.name == preferredLocalTranscriptionModelName && Self.isLocalProvider($0.provider)
+            })
+        {
+            return existingModel
+        }
+
+        return requiredTranscriptionModel
+    }
+
+    func reconcileLocalTranscriptionModel(using modelManager: TranscriptionModelManager) {
+        guard let preferredLocalTranscriptionModelName else { return }
+
+        if !modelManager.usableModels.contains(where: { $0.name == preferredLocalTranscriptionModelName }) {
+            self.preferredLocalTranscriptionModelName = nil
+        }
+    }
+
+    func isLocalTranscriptionModelAvailable(using modelManager: TranscriptionModelManager) -> Bool {
+        guard let selectedLocalTranscriptionModel else { return false }
+        return modelManager.usableModels.contains { $0.name == selectedLocalTranscriptionModel.name }
+    }
+
+    private static func isLocalProvider(_ provider: ModelProvider) -> Bool {
+        switch provider {
+        case .whisper, .fluidAudio, .transcribeCpp, .nativeApple:
+            return true
+        default:
+            return false
+        }
+    }
+
     func selectedOnboardingTranscriptionProviderKeyBinding() -> Binding<String> {
         Binding(
             get: { [weak self] in
@@ -396,11 +432,6 @@ final class OnboardingCoordinator: ObservableObject {
                 self?.flow.selectOnboardingProvider(provider, aiService: aiService)
             }
         )
-    }
-
-    func isTranscriptionModelDownloaded(using modelManager: FluidAudioModelManager) -> Bool {
-        guard let requiredTranscriptionModel else { return false }
-        return modelManager.isFluidAudioModelDownloaded(requiredTranscriptionModel)
     }
 
     func isTranscriptionSetupReady(isTranscriptionModelDownloaded: Bool) -> Bool {

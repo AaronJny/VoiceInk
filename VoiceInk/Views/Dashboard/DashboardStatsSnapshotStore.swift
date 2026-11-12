@@ -40,6 +40,8 @@ final class DashboardStatsSnapshotStore: @unchecked Sendable {
     private let fileManager: FileManager
     private let userDefaults: UserDefaults
     private let snapshotURL: URL
+    private let stateLock = NSLock()
+    private var staleGeneration: UInt64 = 0
     private let saveQueue = DispatchQueue(
         label: "com.prakashjoshipax.voiceink.dashboardStatsSnapshotStore", qos: .utility)
 
@@ -54,6 +56,9 @@ final class DashboardStatsSnapshotStore: @unchecked Sendable {
             appSupportRoot
             .appendingPathComponent("com.prakashjoshipax.VoiceInk", isDirectory: true)
         self.snapshotURL = appSupportURL.appendingPathComponent("dashboard-stats-snapshot.json")
+        if userDefaults.bool(forKey: Self.staleDefaultsKey) {
+            staleGeneration = 1
+        }
     }
 
     func loadSnapshot() -> CachedSnapshot? {
@@ -83,7 +88,7 @@ final class DashboardStatsSnapshotStore: @unchecked Sendable {
         let metadata = Metadata(
             version: Self.currentVersion,
             generatedAt: Date(),
-            metricCount: summary.totalCount,
+            metricCount: summary.storedSessionMetricCount,
             localeIdentifier: Locale.current.identifier,
             timeZoneIdentifier: TimeZone.current.identifier
         )
@@ -91,8 +96,11 @@ final class DashboardStatsSnapshotStore: @unchecked Sendable {
             metadata: metadata,
             summary: summary
         )
+        stateLock.lock()
+        let generation = staleGeneration
+        stateLock.unlock()
 
-        saveQueue.async {
+        saveQueue.async { [self] in
             do {
                 try FileManager.default.createDirectory(
                     at: snapshotURL.deletingLastPathComponent(),
@@ -100,7 +108,12 @@ final class DashboardStatsSnapshotStore: @unchecked Sendable {
                 )
                 let data = try JSONEncoder().encode(snapshot)
                 try data.write(to: snapshotURL, options: [.atomic])
-                userDefaults.removeObject(forKey: Self.staleDefaultsKey)
+                stateLock.lock()
+                let canMarkFresh = staleGeneration == generation
+                if canMarkFresh {
+                    userDefaults.removeObject(forKey: Self.staleDefaultsKey)
+                }
+                stateLock.unlock()
             } catch {
                 logger.error("Failed to save dashboard stats snapshot: \(error, privacy: .public)")
             }
@@ -110,7 +123,10 @@ final class DashboardStatsSnapshotStore: @unchecked Sendable {
     }
 
     func markStale() {
+        stateLock.lock()
+        staleGeneration &+= 1
         userDefaults.set(true, forKey: Self.staleDefaultsKey)
+        stateLock.unlock()
     }
 
     func isMarkedStale() -> Bool {

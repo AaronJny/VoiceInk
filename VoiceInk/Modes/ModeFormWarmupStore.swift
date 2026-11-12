@@ -2,17 +2,23 @@ import Combine
 import Foundation
 
 struct ModeFormWarmupSnapshot {
-    let connectedAIProviders: [AIProvider]
+    let configuredAIProviders: [AIProvider]
     let aiModelsByProvider: [AIProvider: [String]]
     let selectedAIModelsByProvider: [AIProvider: String]
+    let defaultOllamaServerID: UUID?
+    let ollamaModelsByServerID: [UUID: [String]]
+    let ollamaPreferredModelsByServerID: [UUID: String]
     let usableTranscriptionModels: [any TranscriptionModel]
     let allTranscriptionModels: [any TranscriptionModel]
     let prompts: [CustomPrompt]
 
     static let empty = ModeFormWarmupSnapshot(
-        connectedAIProviders: [],
+        configuredAIProviders: [],
         aiModelsByProvider: [:],
         selectedAIModelsByProvider: [:],
+        defaultOllamaServerID: nil,
+        ollamaModelsByServerID: [:],
+        ollamaPreferredModelsByServerID: [:],
         usableTranscriptionModels: [],
         allTranscriptionModels: [],
         prompts: []
@@ -24,7 +30,7 @@ struct ModeFormWarmupSnapshot {
         enhancementService: AIEnhancementService,
         transcriptionModelManager: TranscriptionModelManager
     ) {
-        let providers = aiService.connectedProviders
+        let providers = aiService.configuredProviders
         var modelsByProvider: [AIProvider: [String]] = [:]
         var selectedModelsByProvider: [AIProvider: String] = [:]
 
@@ -33,25 +39,40 @@ struct ModeFormWarmupSnapshot {
             selectedModelsByProvider[provider] = aiService.selectedModel(for: provider)
         }
 
-        connectedAIProviders = providers
+        configuredAIProviders = providers
         aiModelsByProvider = modelsByProvider
         selectedAIModelsByProvider = selectedModelsByProvider
+        defaultOllamaServerID = aiService.defaultOllamaServerID
+        ollamaModelsByServerID = Dictionary(
+            uniqueKeysWithValues: aiService.ollamaServers.map { server in
+                (server.id, aiService.availableOllamaModels(serverID: server.id))
+            }
+        )
+        ollamaPreferredModelsByServerID = Dictionary(
+            uniqueKeysWithValues: aiService.ollamaServers.map { ($0.id, $0.preferredModel) }
+        )
         usableTranscriptionModels = transcriptionModelManager.usableModels
         allTranscriptionModels = transcriptionModelManager.allAvailableModels
         prompts = enhancementService.allPrompts
     }
 
     private init(
-        connectedAIProviders: [AIProvider],
+        configuredAIProviders: [AIProvider],
         aiModelsByProvider: [AIProvider: [String]],
         selectedAIModelsByProvider: [AIProvider: String],
+        defaultOllamaServerID: UUID?,
+        ollamaModelsByServerID: [UUID: [String]],
+        ollamaPreferredModelsByServerID: [UUID: String],
         usableTranscriptionModels: [any TranscriptionModel],
         allTranscriptionModels: [any TranscriptionModel],
         prompts: [CustomPrompt]
     ) {
-        self.connectedAIProviders = connectedAIProviders
+        self.configuredAIProviders = configuredAIProviders
         self.aiModelsByProvider = aiModelsByProvider
         self.selectedAIModelsByProvider = selectedAIModelsByProvider
+        self.defaultOllamaServerID = defaultOllamaServerID
+        self.ollamaModelsByServerID = ollamaModelsByServerID
+        self.ollamaPreferredModelsByServerID = ollamaPreferredModelsByServerID
         self.usableTranscriptionModels = usableTranscriptionModels
         self.allTranscriptionModels = allTranscriptionModels
         self.prompts = prompts
@@ -67,6 +88,19 @@ struct ModeFormWarmupSnapshot {
 
     func selectedModel(for provider: AIProvider) -> String {
         selectedAIModelsByProvider[provider] ?? provider.defaultModel
+    }
+
+    func availableOllamaModels(serverID: UUID?) -> [String] {
+        guard let serverID else { return [] }
+        return ollamaModelsByServerID[serverID] ?? []
+    }
+
+    func preferredOllamaModel(serverID: UUID?) -> String? {
+        guard let serverID else { return nil }
+        if let preferred = ollamaPreferredModelsByServerID[serverID], !preferred.isEmpty {
+            return preferred
+        }
+        return ollamaModelsByServerID[serverID]?.first
     }
 
     func transcriptionModel(named name: String?) -> (any TranscriptionModel)? {

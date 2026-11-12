@@ -19,6 +19,7 @@ struct ModeConfigDraft {
     var useScreenCapture: Bool
     var selectedAIProvider: String?
     var selectedAIModel: String?
+    var selectedOllamaServerID: UUID?
     var outputMode: ModeOutputMode
     var autoSendKey: AutoSendKey
     var customCommand: String
@@ -50,6 +51,7 @@ struct ModeConfigDraft {
             useScreenCapture = true
             selectedAIProvider = inheritedConfig?.selectedAIProvider
             selectedAIModel = inheritedConfig?.selectedAIModel
+            selectedOllamaServerID = inheritedConfig?.selectedOllamaServerID
             outputMode = .paste
             autoSendKey = .none
             customCommand = inheritedConfig?.customCommand?.command ?? ""
@@ -77,6 +79,7 @@ struct ModeConfigDraft {
             useScreenCapture = latestConfig.useScreenCapture
             selectedAIProvider = latestConfig.selectedAIProvider
             selectedAIModel = latestConfig.selectedAIModel
+            selectedOllamaServerID = latestConfig.selectedOllamaServerID
             outputMode = latestConfig.outputMode
             autoSendKey = latestConfig.autoSendKey
             customCommand = latestConfig.customCommand?.command ?? ""
@@ -91,18 +94,33 @@ struct ModeConfigDraft {
     }
 
     mutating func applyAddModeDefaults(snapshot: ModeFormWarmupSnapshot) {
-        let connectedProviders = snapshot.connectedAIProviders
+        let configuredProviders = snapshot.configuredAIProviders
         let inheritedProvider = selectedAIProvider.flatMap(AIProvider.init(rawValue:))
         let provider =
             inheritedProvider.flatMap { provider in
-                connectedProviders.contains(provider) ? provider : nil
-            } ?? connectedProviders.first
+                configuredProviders.contains(provider) ? provider : nil
+            } ?? configuredProviders.first
 
         selectedAIProvider = provider?.rawValue
         guard let provider, provider != .localCLI else {
             selectedAIModel = nil
+            selectedOllamaServerID = nil
             return
         }
+
+        if provider == .ollama {
+            selectedOllamaServerID = selectedOllamaServerID ?? snapshot.defaultOllamaServerID
+            let models = snapshot.availableOllamaModels(serverID: selectedOllamaServerID)
+            if let selectedAIModel, !selectedAIModel.isEmpty,
+                models.isEmpty || models.contains(selectedAIModel)
+            {
+                return
+            }
+            selectedAIModel = snapshot.preferredOllamaModel(serverID: selectedOllamaServerID)
+            return
+        }
+
+        selectedOllamaServerID = nil
 
         if provider == .voiceInkRefine {
             selectedAIModel = provider.defaultModel
@@ -188,6 +206,7 @@ struct ModeConfigDraft {
                 isTextFormattingEnabled: isTextFormattingEnabled,
                 selectedAIProvider: selectedAIProvider,
                 selectedAIModel: selectedAIModel,
+                selectedOllamaServerID: selectedOllamaServerID,
                 outputMode: outputMode,
                 autoSendKey: savedAutoSendKey,
                 customCommand: savedCustomCommand,
@@ -213,6 +232,7 @@ struct ModeConfigDraft {
             updatedConfig.useScreenCapture = useScreenCapture
             updatedConfig.selectedAIProvider = selectedAIProvider
             updatedConfig.selectedAIModel = selectedAIModel
+            updatedConfig.selectedOllamaServerID = selectedOllamaServerID
             updatedConfig.outputMode = outputMode
             updatedConfig.autoSendKey = savedAutoSendKey
             updatedConfig.customCommand = savedCustomCommand

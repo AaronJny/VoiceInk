@@ -3,14 +3,13 @@ import Foundation
 /// Routes transcribe.cpp-backed models to their model-specific service.
 final class TranscribeCppTranscriptionService: TranscriptionService, @unchecked Sendable {
     private let cohereService = CohereTranscriptionService()
+    private let qwenService = CohereTranscriptionService()
 
     func loadModel(for model: TranscribeCppModel) async throws {
-        switch model.name {
-        case TranscribeCppModelCatalog.cohereTranscribe.modelName:
-            try await cohereService.loadModel(for: model)
-        default:
+        guard let service = service(for: model.name) else {
             throw unsupportedModelError(model.name)
         }
+        try await service.loadModel(for: model)
     }
 
     func transcribe(
@@ -26,20 +25,30 @@ final class TranscribeCppTranscriptionService: TranscriptionService, @unchecked 
             )
         }
 
-        switch transcribeCppModel.name {
-        case TranscribeCppModelCatalog.cohereTranscribe.modelName:
-            return try await cohereService.transcribe(
-                audioURL: audioURL,
-                model: transcribeCppModel,
-                context: context
-            )
-        default:
+        guard let service = service(for: transcribeCppModel.name) else {
             throw unsupportedModelError(transcribeCppModel.name)
         }
+        return try await service.transcribe(
+            audioURL: audioURL,
+            model: transcribeCppModel,
+            context: context
+        )
     }
 
     func cleanup() {
         cohereService.cleanup()
+        qwenService.cleanup()
+    }
+
+    private func service(for modelName: String) -> CohereTranscriptionService? {
+        switch modelName {
+        case TranscribeCppModelCatalog.cohereTranscribe.modelName:
+            return cohereService
+        case TranscribeCppModelCatalog.qwen3ASR1_7B.modelName:
+            return qwenService
+        default:
+            return nil
+        }
     }
 
     private func unsupportedModelError(_ modelName: String) -> NSError {

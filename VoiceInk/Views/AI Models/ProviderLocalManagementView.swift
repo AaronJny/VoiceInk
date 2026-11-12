@@ -6,9 +6,14 @@ struct LocalEnhancementServiceManagementView: View {
 
     @State private var isOllamaExpanded = false
     @State private var isLocalCLIExpanded = false
-    @State private var ollamaBaseURL = UserDefaults.standard.string(forKey: "ollamaBaseURL") ?? "http://localhost:11434"
-    @State private var selectedOllamaModel = UserDefaults.standard.string(forKey: "ollamaSelectedModel") ?? "mistral"
+    @State private var selectedOllamaServerID: UUID?
+    @State private var ollamaServerName = ""
+    @State private var ollamaBaseURL = OllamaService.defaultBaseURL
+    @State private var selectedOllamaModel = ""
     @State private var ollamaUserRefreshError: String?
+    @State private var isSyncingOllamaState = false
+    @State private var ollamaServerBeingRefreshed: UUID?
+    @State private var ollamaServerPendingRemoval: OllamaServerConfiguration?
     @State private var localCLICommandTemplate = ""
     @State private var localCLITimeoutSeconds = LocalCLIService.defaultTimeoutSeconds
     @State private var isSyncingLocalCLIState = false
@@ -28,7 +33,7 @@ struct LocalEnhancementServiceManagementView: View {
             VStack(spacing: 0) {
                 LocalProviderDisclosureRow(
                     title: Text(verbatim: "Ollama"),
-                    subtitle: ollamaModelNames.isEmpty ? Text("Local server") : Text(localModelCountLabel),
+                    subtitle: Text("Server"),
                     systemImage: "server.rack",
                     statusTitle: ollamaStatusTitle,
                     isExpanded: $isOllamaExpanded
@@ -52,90 +57,219 @@ struct LocalEnhancementServiceManagementView: View {
             .background(AppMaterialCardBackground(cornerRadius: 11))
         }
         .onAppear {
-            selectedOllamaModel = aiService.selectedModel(for: .ollama)
+            selectedOllamaServerID = aiService.defaultOllamaServerID ?? ollamaServers.first?.id
+            syncOllamaStateFromSelection()
             syncLocalCLIStateFromService()
         }
+        .confirmationDialog(
+            "Remove Ollama Server?",
+            isPresented: Binding(
+                get: { ollamaServerPendingRemoval != nil },
+                set: { if !$0 { ollamaServerPendingRemoval = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                removePendingOllamaServer()
+            }
+            Button("Cancel", role: .cancel) {
+                ollamaServerPendingRemoval = nil
+            }
+        } message: {
+            if let server = ollamaServerPendingRemoval {
+                Text("Remove \(server.name) from VoiceInk? Your Ollama server and models will not be deleted.")
+            }
+        }
+    }
+
+    private var ollamaServers: [OllamaServerConfiguration] {
+        aiService.ollamaServers
+    }
+
+    private var selectedOllamaServer: OllamaServerConfiguration? {
+        aiService.ollamaServerConfiguration(id: selectedOllamaServerID)
     }
 
     private var ollamaModelNames: [String] {
-        aiService.availableModels(for: .ollama)
-    }
-
-    private var localModelCountLabel: String {
-        let count = ollamaModelNames.count
-        return String(localized: "\(count) models")
+        aiService.availableOllamaModels(serverID: selectedOllamaServerID)
     }
 
     private var ollamaStatusTitle: Text {
-        if aiService.isOllamaRefreshing {
+        if ollamaServerBeingRefreshed != nil || aiService.isOllamaRefreshing
+            || ollamaServers.contains(where: { aiService.ollamaServerStatus(id: $0.id).isRefreshing })
+        {
             return Text("Checking")
         }
 
-        if !aiService.connectedProviders.contains(.ollama) {
-            return Text("Disconnected")
+        let connectedCount = ollamaServers.filter {
+            aiService.ollamaServerStatus(id: $0.id).isConnected
+        }.count
+        if connectedCount > 0 {
+            return Text("Connected")
         }
 
-        return ollamaModelNames.isEmpty ? Text("No models") : Text(localModelCountLabel)
+        return ollamaServers.isEmpty ? Text("Not configured") : Text("Disconnected")
     }
 
     private var ollamaActionTitle: LocalizedStringKey {
-        aiService.connectedProviders.contains(.ollama) ? "Refresh" : "Connect"
+        guard let selectedOllamaServer else { return "Connect" }
+        return aiService.ollamaServerStatus(id: selectedOllamaServer.id).isConnected ? "Refresh" : "Connect"
+    }
+
+    private var selectedOllamaServerIsRefreshing: Bool {
+        guard let selectedOllamaServer else { return false }
+        return ollamaServerBeingRefreshed == selectedOllamaServer.id
+            || aiService.ollamaServerStatus(id: selectedOllamaServer.id).isRefreshing
     }
 
     private var ollamaConfiguration: some View {
         LocalProviderExpandedContent {
-            LocalProviderFormRow(title: "Server") {
-                HStack(spacing: 8) {
-                    TextField("", text: $ollamaBaseURL, prompt: Text(verbatim: "http://localhost:11434"))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 320)
-                        .disabled(aiService.isOllamaRefreshing)
-                        .onChange(of: ollamaBaseURL) { _, _ in
-                            ollamaUserRefreshError = nil
-                        }
+            if ollamaServers.isEmpty {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Not configured")
+                            .font(.system(size: 12, weight: .medium))
+                        Text("Add a server to use local models in Modes.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
 
                     Button {
-                        ollamaUserRefreshError = nil
-                        aiService.updateOllamaBaseURL(ollamaBaseURL)
-                        checkOllamaConnectionFromUserAction()
+                        addOllamaServer()
                     } label: {
-                        if aiService.isOllamaRefreshing {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text(ollamaActionTitle)
-                        }
+                        Label("Add", systemImage: "plus")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .disabled(aiService.isOllamaRefreshing)
                 }
-            }
+            } else {
+                LocalProviderFormRow(title: "Server") {
+                    HStack(spacing: 8) {
+                        Picker("Server", selection: $selectedOllamaServerID) {
+                            ForEach(ollamaServers) { server in
+                                Text(server.name).tag(server.id as UUID?)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .frame(maxWidth: 240, alignment: .leading)
+                        .onChange(of: selectedOllamaServerID) { _, _ in
+                            syncOllamaStateFromSelection()
+                        }
 
-            if let ollamaUserRefreshError {
-                Text(ollamaUserRefreshError)
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.Status.error)
-                    .fixedSize(horizontal: false, vertical: true)
+                        Button {
+                            addOllamaServer()
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .help("Add Ollama server")
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+
+                        Button(role: .destructive) {
+                            ollamaServerPendingRemoval = selectedOllamaServer
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .help("Remove Ollama server")
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+
+                Divider()
                     .padding(.leading, LocalProviderMetrics.labelWidth + 12)
-            }
 
-            if !ollamaModelNames.isEmpty {
+                LocalProviderFormRow(title: "Name") {
+                    TextField("Server name", text: $ollamaServerName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 320)
+                        .onSubmit { saveSelectedOllamaServer() }
+                }
+
+                LocalProviderFormRow(title: "URL") {
+                    HStack(spacing: 8) {
+                        TextField("", text: $ollamaBaseURL, prompt: Text(verbatim: "http://localhost:11434"))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 320)
+                            .disabled(selectedOllamaServerIsRefreshing)
+                            .onChange(of: ollamaBaseURL) { _, _ in ollamaUserRefreshError = nil }
+                            .onSubmit { checkOllamaConnectionFromUserAction() }
+
+                        Button {
+                            ollamaUserRefreshError = nil
+                            checkOllamaConnectionFromUserAction()
+                        } label: {
+                            if selectedOllamaServerIsRefreshing {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text(ollamaActionTitle)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(selectedOllamaServerIsRefreshing)
+                    }
+                }
+
+                if let ollamaUserRefreshError {
+                    Text(ollamaUserRefreshError)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.Status.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, LocalProviderMetrics.labelWidth + 12)
+                }
+
+                LocalProviderFormRow(title: "Default") {
+                    if selectedOllamaServerID == aiService.defaultOllamaServerID {
+                        Label("Default", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Button("Default") {
+                            if let selectedOllamaServerID {
+                                aiService.setDefaultOllamaServer(id: selectedOllamaServerID)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+
                 Divider()
                     .padding(.leading, LocalProviderMetrics.labelWidth + 12)
 
                 LocalProviderFormRow(title: "Model") {
-                    Picker("Model", selection: $selectedOllamaModel) {
-                        ForEach(ollamaModelNames, id: \.self) { model in
-                            Text(model).tag(model)
+                    if ollamaModelNames.isEmpty {
+                        TextField("Model name", text: $selectedOllamaModel)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 320)
+                            .onSubmit {
+                                guard let selectedOllamaServerID, !selectedOllamaModel.isEmpty else { return }
+                                aiService.setPreferredOllamaModel(
+                                    selectedOllamaModel,
+                                    serverID: selectedOllamaServerID
+                                )
+                            }
+                    } else {
+                        Picker("Model", selection: $selectedOllamaModel) {
+                            ForEach(ollamaModelNames, id: \.self) { model in
+                                Text(model).tag(model)
+                            }
                         }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: 320, alignment: .leading)
-                    .onChange(of: selectedOllamaModel) { _, newValue in
-                        aiService.updateSelectedOllamaModel(newValue)
-                        aiService.selectModel(newValue, for: .ollama)
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .frame(maxWidth: 320, alignment: .leading)
+                        .onChange(of: selectedOllamaModel) { _, newValue in
+                            guard !isSyncingOllamaState,
+                                let selectedOllamaServerID,
+                                !newValue.isEmpty
+                            else { return }
+                            aiService.setPreferredOllamaModel(newValue, serverID: selectedOllamaServerID)
+                        }
                     }
                 }
             }
@@ -216,17 +350,88 @@ struct LocalEnhancementServiceManagementView: View {
     }
 
     private func checkOllamaConnectionFromUserAction() {
-        Task { @MainActor in
-            let result = await aiService.refreshOllamaAvailability()
-            let models = result.models.map(\.name)
+        guard let serverID = selectedOllamaServerID else { return }
+        saveSelectedOllamaServer()
+        ollamaServerBeingRefreshed = serverID
 
+        Task { @MainActor in
+            defer {
+                if ollamaServerBeingRefreshed == serverID {
+                    ollamaServerBeingRefreshed = nil
+                }
+            }
+            let result = await aiService.refreshOllamaServer(id: serverID)
+            guard selectedOllamaServerID == serverID else { return }
+
+            let models = result.models.map(\.name)
             ollamaUserRefreshError = result.errorMessage
 
             if !models.contains(selectedOllamaModel), let firstModel = models.first {
+                isSyncingOllamaState = true
                 selectedOllamaModel = firstModel
-                aiService.selectModel(firstModel, for: .ollama)
+                aiService.setPreferredOllamaModel(firstModel, serverID: serverID)
+                DispatchQueue.main.async {
+                    isSyncingOllamaState = false
+                }
             }
         }
+    }
+
+    private func addOllamaServer() {
+        let serverNumber = ollamaServers.count + 1
+        let server = aiService.addOllamaServer(
+            name: String(localized: "Ollama Server \(serverNumber)"),
+            baseURL: OllamaService.defaultBaseURL
+        )
+        selectedOllamaServerID = server.id
+        ollamaUserRefreshError = nil
+        syncOllamaStateFromSelection()
+    }
+
+    private func removePendingOllamaServer() {
+        guard let server = ollamaServerPendingRemoval else { return }
+
+        aiService.removeOllamaServer(id: server.id)
+        ollamaServerPendingRemoval = nil
+        selectedOllamaServerID = aiService.defaultOllamaServerID ?? ollamaServers.first?.id
+        ollamaUserRefreshError = nil
+        syncOllamaStateFromSelection()
+    }
+
+    private func syncOllamaStateFromSelection() {
+        guard let server = selectedOllamaServer else {
+            isSyncingOllamaState = true
+            ollamaServerName = ""
+            ollamaBaseURL = OllamaService.defaultBaseURL
+            selectedOllamaModel = ""
+            DispatchQueue.main.async {
+                isSyncingOllamaState = false
+            }
+            return
+        }
+
+        isSyncingOllamaState = true
+        if selectedOllamaServerID != server.id {
+            selectedOllamaServerID = server.id
+        }
+        ollamaServerName = server.name
+        ollamaBaseURL = server.baseURL
+        selectedOllamaModel =
+            server.preferredModel.isEmpty ? ollamaModelNames.first ?? "" : server.preferredModel
+        ollamaUserRefreshError = aiService.ollamaServerStatus(id: server.id).errorMessage
+        DispatchQueue.main.async {
+            isSyncingOllamaState = false
+        }
+    }
+
+    private func saveSelectedOllamaServer() {
+        guard !isSyncingOllamaState, var server = selectedOllamaServer else { return }
+
+        let name = ollamaServerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL = ollamaBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { server.name = name }
+        if !baseURL.isEmpty { server.baseURL = baseURL }
+        aiService.updateOllamaServer(server)
     }
 
     private func syncLocalCLIStateFromService() {

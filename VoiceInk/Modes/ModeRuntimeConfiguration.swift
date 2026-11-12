@@ -32,6 +32,8 @@ struct EnhancementRuntimeConfiguration {
     let prompt: CustomPrompt?
     let provider: AIProvider?
     let modelName: String?
+    let ollamaServerID: UUID?
+    let ollamaBaseURL: URL?
     let useClipboardContext: Bool
     let useSelectedTextContext: Bool
     let useScreenCaptureContext: Bool
@@ -43,6 +45,8 @@ struct EnhancementRuntimeConfiguration {
             prompt: prompt,
             provider: provider,
             modelName: modelName,
+            ollamaServerID: ollamaServerID,
+            ollamaBaseURL: ollamaBaseURL,
             useClipboardContext: useClipboardContext,
             useSelectedTextContext: useSelectedTextContext,
             useScreenCaptureContext: useScreenCaptureContext
@@ -159,9 +163,13 @@ enum ModeRuntimeResolver {
                 promptId: mode?.selectedPrompt,
                 enhancementService: enhancementService
             )
+        let ollamaServer = provider == .ollama
+            ? aiService.ollamaServerConfiguration(id: mode?.selectedOllamaServerID)
+            : nil
         let modelName = resolvedEnhancementModelName(
             provider: provider,
             configuredModelName: mode?.selectedAIModel,
+            ollamaServer: ollamaServer,
             aiService: aiService
         )
 
@@ -171,6 +179,8 @@ enum ModeRuntimeResolver {
             prompt: prompt,
             provider: provider,
             modelName: modelName,
+            ollamaServerID: ollamaServer?.id,
+            ollamaBaseURL: ollamaServer.flatMap { URL(string: $0.baseURL) },
             useClipboardContext: provider == .voiceInkRefine ? false : mode?.useClipboardContext ?? false,
             useSelectedTextContext: provider == .voiceInkRefine ? false : mode?.useSelectedTextContext ?? true,
             useScreenCaptureContext: provider == .voiceInkRefine ? false : mode?.useScreenCapture ?? false
@@ -201,7 +211,7 @@ enum ModeRuntimeResolver {
         return enhancementService.allPrompts.first { $0.id == uuid }
     }
 
-    private static func resolvedProvider(
+    static func resolvedProvider(
         providerName: String?,
         aiService: AIService
     ) -> AIProvider? {
@@ -209,15 +219,16 @@ enum ModeRuntimeResolver {
             guard let provider = AIProvider(rawValue: providerName) else {
                 return nil
             }
-            return aiService.connectedProviders.contains(provider) ? provider : nil
+            return aiService.configuredProviders.contains(provider) ? provider : nil
         }
 
-        return aiService.connectedProviders.first
+        return aiService.configuredProviders.first
     }
 
     private static func resolvedEnhancementModelName(
         provider: AIProvider?,
         configuredModelName: String?,
+        ollamaServer: OllamaServerConfiguration?,
         aiService: AIService
     ) -> String? {
         guard let provider else { return nil }
@@ -228,6 +239,16 @@ enum ModeRuntimeResolver {
 
         if provider == .voiceInkRefine {
             return provider.defaultModel
+        }
+
+        if provider == .ollama {
+            if let configuredModelName, !configuredModelName.isEmpty {
+                return configuredModelName
+            }
+            if let preferredModel = ollamaServer?.preferredModel, !preferredModel.isEmpty {
+                return preferredModel
+            }
+            return ollamaServer?.lastKnownModelNames.first ?? provider.defaultModel
         }
 
         let models = aiService.availableModels(for: provider)

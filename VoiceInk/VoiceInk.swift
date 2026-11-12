@@ -55,14 +55,17 @@ struct VoiceInkApp: App {
             SessionMetric.self,
         ])
         let resolvedContainer: ModelContainer
+        let usesPersistentStorage: Bool
 
         // Attempt 1: Try persistent storage
         do {
             resolvedContainer = try Self.createPersistentContainer(schema: schema, logger: logger)
+            usesPersistentStorage = true
         } catch let persistentError {
             // Attempt 2: Try in-memory storage
             do {
                 resolvedContainer = try Self.createInMemoryContainer(schema: schema, logger: logger)
+                usesPersistentStorage = false
                 logger.warning("Using in-memory storage as fallback. Data will not persist between sessions.")
 
                 DispatchQueue.main.async {
@@ -158,6 +161,8 @@ struct VoiceInkApp: App {
         let prewarmService = ModelPrewarmService(
             transcriptionModelManager: transcriptionModelManager,
             whisperModelManager: whisperModelManager,
+            aiService: aiService,
+            enhancementService: enhancementService,
             modelContext: resolvedContainer.mainContext
         )
         _prewarmService = StateObject(wrappedValue: prewarmService)
@@ -171,16 +176,31 @@ struct VoiceInkApp: App {
 
         AppShortcuts.updateAppShortcutParameters()
 
-        let statsMigrationTask = SessionMetricMigrationService.shared.runStatsMigrationIfNeeded(
-            modelContainer: resolvedContainer)
-        let mainContext = resolvedContainer.mainContext
-        Task { @MainActor in
-            await statsMigrationTask?.value
-            TranscriptionAutoCleanupService.shared.startMonitoring(modelContext: mainContext)
-
-            let tokenBackfillTask = SessionMetricMigrationService.shared.runEnhancementTokenBackfillIfNeeded(
+        if usesPersistentStorage {
+            let legacyStatsCarryForward = LegacyStatsCarryForwardService()
+            legacyStatsCarryForward.prepareIfNeeded()
+            let statsMigrationTask = SessionMetricMigrationService.shared.runStatsMigrationIfNeeded(
                 modelContainer: resolvedContainer)
-            await tokenBackfillTask?.value
+            let mainContext = resolvedContainer.mainContext
+            Task { @MainActor in
+                await statsMigrationTask?.value
+
+                if UserDefaults.standard.bool(forKey: "HasCompletedStatsMigration") {
+                    do {
+                        try legacyStatsCarryForward.finalizeIfNeeded(modelContainer: resolvedContainer)
+                    } catch {
+                        logger.error("Legacy stats carry-forward failed: \(error, privacy: .public)")
+                    }
+                }
+
+                TranscriptionAutoCleanupService.shared.startMonitoring(modelContext: mainContext)
+
+                let tokenBackfillTask = SessionMetricMigrationService.shared.runEnhancementTokenBackfillIfNeeded(
+                    modelContainer: resolvedContainer)
+                await tokenBackfillTask?.value
+            }
+        } else {
+            logger.warning("Skipping persistent statistics migrations while using in-memory storage.")
         }
     }
 

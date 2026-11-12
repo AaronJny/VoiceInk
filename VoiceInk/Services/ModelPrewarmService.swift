@@ -7,7 +7,10 @@ import os
 final class ModelPrewarmService: ObservableObject {
     private let transcriptionModelManager: TranscriptionModelManager
     private let whisperModelManager: WhisperModelManager
+    private let aiService: AIService
+    private let enhancementService: AIEnhancementService
     private let modelContext: ModelContext
+    private let userDefaults: UserDefaults
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "ModelPrewarm")
     private lazy var serviceRegistry = TranscriptionServiceRegistry(
         modelProvider: whisperModelManager,
@@ -15,15 +18,21 @@ final class ModelPrewarmService: ObservableObject {
         modelContext: modelContext
     )
     private let prewarmAudioURL = Bundle.main.url(forResource: "sound7", withExtension: "wav")
-    private let prewarmEnabledKey = "PrewarmModelOnWake"
 
     init(
-        transcriptionModelManager: TranscriptionModelManager, whisperModelManager: WhisperModelManager,
-        modelContext: ModelContext
+        transcriptionModelManager: TranscriptionModelManager,
+        whisperModelManager: WhisperModelManager,
+        aiService: AIService,
+        enhancementService: AIEnhancementService,
+        modelContext: ModelContext,
+        userDefaults: UserDefaults = .standard
     ) {
         self.transcriptionModelManager = transcriptionModelManager
         self.whisperModelManager = whisperModelManager
+        self.aiService = aiService
+        self.enhancementService = enhancementService
         self.modelContext = modelContext
+        self.userDefaults = userDefaults
         setupNotifications()
         schedulePrewarmOnAppLaunch()
     }
@@ -67,7 +76,17 @@ final class ModelPrewarmService: ObservableObject {
     // MARK: - Core Prewarming Logic
 
     private func performPrewarm() async {
-        guard shouldPrewarm() else { return }
+        guard isPrewarmEnabled else {
+            logger.notice("Prewarm disabled by user")
+            return
+        }
+
+        await prewarmTranscriptionModel()
+        await prewarmOllamaEnhancementModel()
+    }
+
+    private func prewarmTranscriptionModel() async {
+        guard shouldPrewarmTranscriptionModel() else { return }
 
         guard let audioURL = prewarmAudioURL else {
             logger.error("❌ Prewarm audio file (sound7.wav) not found")
@@ -102,16 +121,40 @@ final class ModelPrewarmService: ObservableObject {
         }
     }
 
-    // MARK: - Validation
-
-    private func shouldPrewarm() -> Bool {
-        // Check if user has enabled prewarming
-        let isEnabled = UserDefaults.standard.bool(forKey: prewarmEnabledKey)
-        guard isEnabled else {
-            logger.notice("Prewarm disabled by user")
-            return false
+    private func prewarmOllamaEnhancementModel() async {
+        let configuration = ModeRuntimeResolver.currentEnhancementConfiguration(
+            enhancementService: enhancementService,
+            aiService: aiService
+        )
+        guard configuration.isEnabled,
+            configuration.provider == .ollama,
+            let model = configuration.modelName,
+            let baseURL = configuration.ollamaBaseURL,
+            OllamaService.isLoopback(baseURL: baseURL)
+        else {
+            return
         }
 
+        logger.notice("Prewarming Ollama model \(model, privacy: .public)")
+        let startTime = Date()
+        do {
+            try await aiService.prewarmOllama(model: model, baseURL: baseURL)
+            let duration = Date().timeIntervalSince(startTime)
+            logger.notice(
+                "Ollama prewarm completed in \(duration, format: .fixed(precision: 2), privacy: .public)s"
+            )
+        } catch {
+            logger.error("❌ Ollama prewarm failed: \(error, privacy: .public)")
+        }
+    }
+
+    // MARK: - Validation
+
+    var isPrewarmEnabled: Bool {
+        userDefaults.object(forKey: OllamaService.prewarmEnabledKey) as? Bool ?? true
+    }
+
+    private func shouldPrewarmTranscriptionModel() -> Bool {
         // Prewarm only local runtimes that benefit from retained preparation.
         guard
             let model = ModeRuntimeResolver.transcriptionConfiguration(

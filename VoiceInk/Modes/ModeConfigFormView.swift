@@ -42,7 +42,20 @@ struct ModeConfigFormView: View {
     }
 
     private var aiProviderOptions: [AIProvider] {
-        warmupSnapshot.connectedAIProviders
+        warmupSnapshot.configuredAIProviders
+    }
+
+    private var ollamaServers: [OllamaServerConfiguration] {
+        aiService.ollamaServers
+    }
+
+    private var effectiveOllamaServerID: UUID? {
+        if let selectedID = draft.selectedOllamaServerID,
+            ollamaServers.contains(where: { $0.id == selectedID })
+        {
+            return selectedID
+        }
+        return aiService.defaultOllamaServerID ?? ollamaServers.first?.id
     }
 
     private var configuredSelectedAIProvider: AIProvider? {
@@ -71,6 +84,7 @@ struct ModeConfigFormView: View {
         }
         .onAppear {
             applyVoiceInkRefineRulesIfNeeded()
+            ensureOllamaSelectionIfNeeded()
             applyOutputRules()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 isNameFieldFocused = true
@@ -335,19 +349,17 @@ struct ModeConfigFormView: View {
                             draft.selectedAIProvider = aiProviderOptions.first?.rawValue
                             draft.selectedAIModel = nil
                         }
-                        if draft.selectedAIModel == nil,
-                            let provider = configuredSelectedAIProvider,
-                            provider != .localCLI
-                        {
-                            draft.selectedAIModel = warmupSnapshot.selectedModel(for: provider)
+                        if let provider = configuredSelectedAIProvider {
+                            if provider == .ollama {
+                                ensureOllamaSelectionIfNeeded()
+                            } else if draft.selectedAIModel == nil, provider != .localCLI {
+                                draft.selectedAIModel = warmupSnapshot.selectedModel(for: provider)
+                            }
                         }
                         if configuredSelectedAIProvider != .voiceInkRefine,
                             draft.selectedPromptId == nil
                         {
                             draft.selectedPromptId = warmupSnapshot.firstPromptId
-                        }
-                        if configuredSelectedAIProvider == .ollama {
-                            aiService.refreshOllamaAvailabilityInBackground()
                         }
                     }
                 }
@@ -382,14 +394,14 @@ struct ModeConfigFormView: View {
                             switch provider {
                             case .localCLI:
                                 draft.selectedAIModel = nil
+                                draft.selectedOllamaServerID = nil
                             case .voiceInkRefine:
+                                draft.selectedOllamaServerID = nil
                                 applyVoiceInkRefineRules()
                             case .ollama:
-                                if draft.selectedAIModel == nil || draft.selectedAIModel?.isEmpty == true {
-                                    draft.selectedAIModel = warmupSnapshot.selectedModel(for: provider)
-                                }
-                                aiService.refreshOllamaAvailabilityInBackground()
+                                ensureOllamaSelectionIfNeeded()
                             default:
+                                draft.selectedOllamaServerID = nil
                                 draft.selectedAIModel = provider.defaultModel
                             }
 
@@ -403,12 +415,46 @@ struct ModeConfigFormView: View {
                 }
 
                 if let provider = configuredSelectedAIProvider {
+                    if provider == .ollama {
+                        ollamaServerPicker
+                    }
                     aiModelPicker(for: provider)
                     if provider != .voiceInkRefine {
                         promptPicker
                         contextAwarenessRow
                     }
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var ollamaServerPicker: some View {
+        if ollamaServers.isEmpty {
+            LabeledContent("Ollama Server") {
+                Text("No servers configured")
+                    .foregroundColor(.secondary)
+                    .italic()
+            }
+        } else {
+            let serverBinding = Binding<UUID?>(
+                get: { draft.selectedOllamaServerID },
+                set: { newServerID in
+                    selectOllamaServer(id: newServerID)
+                    refreshSelectedOllamaServer()
+                }
+            )
+
+            Picker("Ollama Server", selection: serverBinding) {
+                ForEach(ollamaServers) { server in
+                    let suffix = server.id == aiService.defaultOllamaServerID ? " (Default)" : ""
+                    Text(verbatim: server.name + suffix)
+                        .tag(server.id as UUID?)
+                }
+            }
+            .onAppear {
+                ensureOllamaSelectionIfNeeded()
+                refreshSelectedOllamaServer()
             }
         }
     }
@@ -434,18 +480,32 @@ struct ModeConfigFormView: View {
         } else {
             let models = aiModelOptions(for: provider)
             if models.isEmpty {
-                LabeledContent("AI Model") {
-                    Text(
-                        provider == .openRouter
-                            ? LocalizedStringKey("No models loaded") : LocalizedStringKey("No models available")
+                if provider == .ollama {
+                    TextField(
+                        "AI Model",
+                        text: Binding(
+                            get: { draft.selectedAIModel ?? "" },
+                            set: { draft.selectedAIModel = $0 }
+                        )
                     )
-                    .foregroundColor(.secondary)
-                    .italic()
+                } else {
+                    LabeledContent("AI Model") {
+                        Text(
+                            provider == .openRouter
+                                ? LocalizedStringKey("No models loaded") : LocalizedStringKey("No models available")
+                        )
+                        .foregroundColor(.secondary)
+                        .italic()
+                    }
                 }
             } else {
                 let modelBinding = Binding<String>(
                     get: {
                         if let model = draft.selectedAIModel, !model.isEmpty { return model }
+                        if provider == .ollama {
+                            return preferredOllamaModel(serverID: effectiveOllamaServerID)
+                                ?? provider.defaultModel
+                        }
                         return warmupSnapshot.selectedModel(for: provider)
                     },
                     set: { newModelValue in
@@ -470,7 +530,9 @@ struct ModeConfigFormView: View {
     }
 
     private func aiModelOptions(for provider: AIProvider) -> [String] {
-        var models = warmupSnapshot.availableModels(for: provider)
+        var models = provider == .ollama
+            ? aiService.availableOllamaModels(serverID: effectiveOllamaServerID)
+            : warmupSnapshot.availableModels(for: provider)
 
         if let selectedModel = draft.selectedAIModel,
             !selectedModel.isEmpty,
@@ -480,6 +542,57 @@ struct ModeConfigFormView: View {
         }
 
         return models
+    }
+
+    private func ensureOllamaSelectionIfNeeded() {
+        guard draft.selectedAIProvider == AIProvider.ollama.rawValue,
+            let serverID = effectiveOllamaServerID
+        else { return }
+
+        if draft.selectedOllamaServerID != serverID {
+            selectOllamaServer(id: serverID)
+        } else if draft.selectedAIModel?.isEmpty != false {
+            draft.selectedAIModel = preferredOllamaModel(serverID: serverID)
+        }
+    }
+
+    private func selectOllamaServer(id: UUID?) {
+        guard draft.selectedAIProvider == AIProvider.ollama.rawValue,
+            let id,
+            ollamaServers.contains(where: { $0.id == id })
+        else { return }
+
+        draft.selectedOllamaServerID = id
+        draft.selectedAIModel = preferredOllamaModel(serverID: id)
+    }
+
+    private func preferredOllamaModel(serverID: UUID?) -> String? {
+        guard let serverID,
+            let server = aiService.ollamaServerConfiguration(id: serverID)
+        else { return nil }
+
+        let models = aiService.availableOllamaModels(serverID: serverID)
+        if !models.isEmpty {
+            if !server.preferredModel.isEmpty, models.contains(server.preferredModel) {
+                return server.preferredModel
+            }
+            return models.first
+        }
+
+        return server.preferredModel.isEmpty ? server.lastKnownModelNames.first : server.preferredModel
+    }
+
+    private func refreshSelectedOllamaServer() {
+        guard draft.selectedAIProvider == AIProvider.ollama.rawValue,
+            let serverID = effectiveOllamaServerID
+        else { return }
+
+        Task { @MainActor in
+            let result = await aiService.refreshOllamaServer(id: serverID)
+            guard draft.selectedOllamaServerID == serverID else { return }
+            guard draft.selectedAIModel?.isEmpty != false else { return }
+            draft.selectedAIModel = result.models.first?.name ?? preferredOllamaModel(serverID: serverID)
+        }
     }
 
     private var promptPicker: some View {

@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct OnboardingTranscriptionSetupCard: View {
-    let localModel: FluidAudioModel?
+    let localModel: (any TranscriptionModel)?
     let setupKind: OnboardingTranscriptionSetupKind
     let providerOptions: [any CloudProvider]
     @Binding var selectedProviderKey: String
@@ -107,19 +107,48 @@ struct OnboardingTranscriptionSetupCard: View {
 
     @ViewBuilder
     private var localSetup: some View {
-        if let localModel {
+        if let fluidAudioModel = localModel as? FluidAudioModel {
             TranscriptionModelDownloadCard(
-                model: localModel,
+                model: fluidAudioModel,
                 isDownloaded: isLocalDownloaded,
                 isDownloading: isLocalDownloading,
                 status: localDownloadStatus,
                 onDownload: {
-                    onDownloadLocalModel(localModel)
+                    onDownloadLocalModel(fluidAudioModel)
                 }
             )
+        } else if let localModel, isLocalDownloaded {
+            existingLocalModelCard(localModel)
         } else {
             missingModelPanel
         }
+    }
+
+    private func existingLocalModelCard(_ model: any TranscriptionModel) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: "waveform")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(AppTheme.Accent.primary)
+                .frame(width: 34, height: 34)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(model.provider.rawValue) \(model.displayName)")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(AppTheme.Text.primary)
+
+                Text("Existing local model")
+                    .font(.system(size: 12))
+                    .foregroundColor(AppTheme.Text.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            Label("Ready", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(AppTheme.Status.success)
+        }
+        .padding(16)
+        .background(AppMaterialCardBackground(cornerRadius: 12))
     }
 
     private var missingModelPanel: some View {

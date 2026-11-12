@@ -11,11 +11,13 @@ struct OnboardingView: View {
     let contentMaxWidth: CGFloat = 560
 
     var body: some View {
-        let isTranscriptionModelDownloaded = coordinator.isTranscriptionModelDownloaded(
-            using: fluidAudioModelManager
+        let localModel = coordinator.selectedLocalTranscriptionModel
+        let downloadableLocalModel = localModel as? FluidAudioModel
+        let isLocalModelAvailable = coordinator.isLocalTranscriptionModelAvailable(
+            using: transcriptionModelManager
         )
         let isTranscriptionSetupReady = coordinator.isTranscriptionSetupReady(
-            isTranscriptionModelDownloaded: isTranscriptionModelDownloaded
+            isTranscriptionModelDownloaded: isLocalModelAvailable
         )
 
         ZStack(alignment: .bottomLeading) {
@@ -52,15 +54,15 @@ struct OnboardingView: View {
                 case .model:
                     OnboardingModelScreen(
                         contentMaxWidth: contentMaxWidth,
-                        localModel: coordinator.requiredTranscriptionModel,
+                        localModel: localModel,
                         setupKind: coordinator.transcriptionSetupKind,
                         providerOptions: coordinator.onboardingTranscriptionProviderOptions,
                         selectedProviderKey: coordinator.selectedOnboardingTranscriptionProviderKeyBinding(),
-                        isLocalDownloaded: isTranscriptionModelDownloaded,
-                        isLocalDownloading: coordinator.requiredTranscriptionModel.map {
+                        isLocalDownloaded: isLocalModelAvailable,
+                        isLocalDownloading: downloadableLocalModel.map {
                             fluidAudioModelManager.isFluidAudioModelDownloading($0)
                         } ?? false,
-                        localDownloadStatus: coordinator.requiredTranscriptionModel.flatMap {
+                        localDownloadStatus: downloadableLocalModel.flatMap {
                             fluidAudioModelManager.downloadStatus(for: $0)
                         },
                         isSetupReady: isTranscriptionSetupReady,
@@ -224,6 +226,7 @@ struct OnboardingView: View {
         .frame(minWidth: 820, minHeight: 680)
         .animation(.easeInOut(duration: 0.22), value: coordinator.stage)
         .onAppear {
+            coordinator.reconcileLocalTranscriptionModel(using: transcriptionModelManager)
             coordinator.flow.ensureDefaultOnboardingTranscriptionProvider()
             coordinator.flow.refreshTranscriptionSetupVerification()
             coordinator.flow.ensureDefaultOnboardingProvider()
@@ -231,7 +234,9 @@ struct OnboardingView: View {
             coordinator.flow.refreshAPIVerification()
             coordinator.flow.refreshExperienceModeState(enhancementService: enhancementService)
             let refreshedTranscriptionSetupReady = coordinator.isTranscriptionSetupReady(
-                isTranscriptionModelDownloaded: isTranscriptionModelDownloaded
+                isTranscriptionModelDownloaded: coordinator.isLocalTranscriptionModelAvailable(
+                    using: transcriptionModelManager
+                )
             )
             coordinator.flow.reconcileStage(
                 isTranscriptionSetupReady: refreshedTranscriptionSetupReady,
@@ -242,10 +247,13 @@ struct OnboardingView: View {
             coordinator.permissions.cancelRefreshTask()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            coordinator.reconcileLocalTranscriptionModel(using: transcriptionModelManager)
             coordinator.permissions.refreshPermissionStatuses()
             coordinator.flow.refreshTranscriptionSetupVerification()
             let refreshedTranscriptionSetupReady = coordinator.isTranscriptionSetupReady(
-                isTranscriptionModelDownloaded: isTranscriptionModelDownloaded
+                isTranscriptionModelDownloaded: coordinator.isLocalTranscriptionModelAvailable(
+                    using: transcriptionModelManager
+                )
             )
             coordinator.flow.reconcileStage(
                 isTranscriptionSetupReady: refreshedTranscriptionSetupReady,

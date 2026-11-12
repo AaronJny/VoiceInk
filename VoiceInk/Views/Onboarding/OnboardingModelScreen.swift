@@ -2,7 +2,7 @@ import SwiftUI
 
 struct OnboardingModelScreen: View {
     let contentMaxWidth: CGFloat
-    let localModel: FluidAudioModel?
+    let localModel: (any TranscriptionModel)?
     let setupKind: OnboardingTranscriptionSetupKind
     let providerOptions: [any CloudProvider]
     @Binding var selectedProviderKey: String
