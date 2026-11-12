@@ -1,5 +1,6 @@
 import Foundation
 import LLMkit
+import SwiftData
 import Testing
 
 @testable import VoiceInk
@@ -12,6 +13,7 @@ private final class OllamaTransportSpy: OllamaTransport, @unchecked Sendable {
     private let shouldFailFetch: Bool
     private var failures: [LLMKitError]
     private(set) var generationCount = 0
+    private(set) var capturedPrompt: String?
     private var request: (
         baseURL: URL, model: String, temperature: Double, contextLength: Int?, keepAlive: String?
     )?
@@ -42,6 +44,7 @@ private final class OllamaTransportSpy: OllamaTransport, @unchecked Sendable {
         timeout: TimeInterval
     ) async throws -> OllamaGenerationResult {
         generationCount += 1
+        capturedPrompt = prompt
         request = (baseURL, model, temperature, contextLength, keepAlive)
         if !failures.isEmpty { throw failures.removeFirst() }
         return OllamaGenerationResult(
@@ -236,6 +239,72 @@ struct OllamaServerConfigurationTests {
         #expect(result.text == "routed")
         #expect(request.baseURL == endpoint)
         #expect(request.model == "mode-specific-model")
+    }
+
+    @MainActor
+    @Test func assistantFollowUpKeepsInitialModeEndpointAfterDefaultChanges() async throws {
+        let defaults = makeDefaults()
+        let transport = OllamaTransportSpy()
+        let service = OllamaService(userDefaults: defaults, transport: transport)
+        service.baseURL = "http://default-a:11434"
+        let aiService = AIService(userDefaults: defaults, ollamaService: service)
+        let endpoint = URL(string: "http://mode-b:22000/root")!
+        let session = AssistantSession()
+        session.beginInitialResponse(
+            transcript: "initial private question", provider: .ollama,
+            modelName: "mode-b-model", ollamaBaseURL: endpoint,
+            modeName: "Respond", modeEmoji: nil, promptName: "Locked prompt"
+        )
+        session.finishInitialResponse("initial reply", systemPrompt: "system context")
+        service.baseURL = "http://new-default-c:11434"
+        session.beginFollowUp("follow-up question")
+        let container = try ModelContainer(
+            for: Transcription.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let chat = AssistantChatService(modelContext: container.mainContext, aiService: aiService)
+
+        let reply = try await chat.requestAssistantReply(
+            provider: .ollama, modelName: session.modelName,
+            ollamaBaseURL: session.ollamaBaseURL,
+            systemPrompt: session.systemPrompt, messages: session.messages
+        )
+
+        #expect(reply.text == "routed")
+        #expect(transport.capturedRequest()?.baseURL == endpoint)
+        #expect(transport.capturedRequest()?.model == "mode-b-model")
+        #expect(transport.capturedPrompt?.contains("initial private question") == true)
+        #expect(transport.capturedPrompt?.contains("initial reply") == true)
+        #expect(transport.capturedPrompt?.contains("follow-up question") == true)
+        session.reset()
+        #expect(session.ollamaBaseURL == nil)
+    }
+
+    @MainActor
+    @Test func assistantWithoutSnapshotEndpointDoesNotContactDefaultServer() async throws {
+        let defaults = makeDefaults()
+        let transport = OllamaTransportSpy()
+        let service = OllamaService(userDefaults: defaults, transport: transport)
+        service.baseURL = "http://default-a:11434"
+        let aiService = AIService(userDefaults: defaults, ollamaService: service)
+        let container = try ModelContainer(
+            for: Transcription.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        let chat = AssistantChatService(modelContext: container.mainContext, aiService: aiService)
+        do {
+            _ = try await chat.requestAssistantReply(
+                provider: .ollama, modelName: "mode-b-model", ollamaBaseURL: nil,
+                systemPrompt: "system context", messages: []
+            )
+            Issue.record("Expected a missing endpoint error")
+        } catch let error as EnhancementError {
+            guard case .notConfigured = error else {
+                Issue.record("Expected notConfigured, got \(error)")
+                return
+            }
+        }
+        #expect(transport.generationCount == 0)
     }
 
     @Test func timeoutRetryStaysOnSameEndpointAndIsBounded() async throws {

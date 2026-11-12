@@ -32,5 +32,5 @@ assert s.get('failedTests',0)==0, 'Failed tests'
 PY
 app="$PWD/.ci-build/Build/Products/$configuration/VoiceInk.app"
 [[ "$('/usr/libexec/PlistBuddy' -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" == com.prakashjoshipax.VoiceInk ]]
-lipo -verify_arch arm64 "$app/Contents/MacOS/VoiceInk"
+lipo "$app/Contents/MacOS/VoiceInk" -verify_arch arm64
 git diff --exit-code -- VoiceInk.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved

@@ -676,6 +676,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
                         transcript: transcript,
                         provider: configuration.provider,
                         modelName: configuration.modelName ?? configuration.provider?.defaultModel,
+                        ollamaBaseURL: configuration.ollamaBaseURL,
                         modeName: configuration.mode?.name,
                         modeEmoji: configuration.mode?.icon.value,
                         promptName: configuration.prompt?.title

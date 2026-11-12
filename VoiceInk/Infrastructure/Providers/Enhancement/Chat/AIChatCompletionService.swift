@@ -138,14 +138,21 @@ extension AIService {
         modelName: String?,
         messages: [ChatMessage],
         systemPrompt: String? = nil,
+        ollamaBaseURL: URL? = nil,
         timeout: TimeInterval = 30,
         retryOnTimeout: Bool = false
     ) async throws -> String {
+        // Assistant sessions must keep their originally resolved endpoint, even if
+        // the default server or Mode changes while the conversation is open.
+        guard provider != .ollama || ollamaBaseURL != nil else {
+            throw EnhancementError.notConfigured
+        }
         let completion = try await performChatCompletion(
             provider: provider,
             modelName: modelName,
             messages: messages,
             systemPrompt: systemPrompt,
+            ollamaBaseURL: ollamaBaseURL,
             timeout: timeout,
             retryOnTimeout: retryOnTimeout
         )

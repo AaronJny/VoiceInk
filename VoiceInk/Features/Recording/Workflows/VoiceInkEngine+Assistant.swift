@@ -12,6 +12,7 @@ extension VoiceInkEngine {
         }
 
         let modelName = assistantSession.modelName
+        let ollamaBaseURL = assistantSession.ollamaBaseURL
         let modeName = assistantSession.modeName
         let modeEmoji = assistantSession.modeEmoji
         let promptName = assistantSession.promptName
@@ -22,6 +23,7 @@ extension VoiceInkEngine {
             let reply = try await assistantChat.requestAssistantReply(
                 provider: provider,
                 modelName: modelName,
+                ollamaBaseURL: ollamaBaseURL,
                 systemPrompt: systemPrompt,
                 messages: assistantSession.messages
             )

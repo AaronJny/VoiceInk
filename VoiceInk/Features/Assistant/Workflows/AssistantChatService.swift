@@ -26,6 +26,7 @@ final class AssistantChatService {
     func requestAssistantReply(
         provider: AIProvider,
         modelName: String?,
+        ollamaBaseURL: URL?,
         systemPrompt: String?,
         messages: [AssistantDisplayMessage]
     ) async throws -> Reply {
@@ -44,6 +45,7 @@ final class AssistantChatService {
             modelName: modelName,
             messages: chatMessages,
             systemPrompt: systemPrompt,
+            ollamaBaseURL: ollamaBaseURL,
             timeout: requestTimeout,
             retryOnTimeout: EnhancementRequestSettings.retryOnTimeout
         )

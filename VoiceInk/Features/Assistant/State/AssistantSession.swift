@@ -28,6 +28,7 @@ final class AssistantSession: ObservableObject {
 
     private(set) var provider: AIProvider?
     private(set) var modelName: String?
+    private(set) var ollamaBaseURL: URL?
     private(set) var modeName: String?
     private(set) var modeEmoji: String?
     private(set) var promptName: String?
@@ -49,12 +50,14 @@ final class AssistantSession: ObservableObject {
         transcript: String,
         provider: AIProvider?,
         modelName: String?,
+        ollamaBaseURL: URL?,
         modeName: String?,
         modeEmoji: String?,
         promptName: String?
     ) {
         self.provider = provider
         self.modelName = modelName
+        self.ollamaBaseURL = ollamaBaseURL
         self.modeName = modeName
         self.modeEmoji = modeEmoji
         self.promptName = promptName
@@ -131,6 +134,7 @@ final class AssistantSession: ObservableObject {
         messages = []
         provider = nil
         modelName = nil
+        ollamaBaseURL = nil
         modeName = nil
         modeEmoji = nil
         promptName = nil
