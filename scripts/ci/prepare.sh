@@ -3,7 +3,8 @@ set -euo pipefail
 mkdir -p artifacts
 [[ "$(uname -m)" == arm64 ]] || { echo 'An ARM64 runner is required.' >&2; exit 1; }
 [[ -d "$DEVELOPER_DIR" ]] || { echo 'Pinned Xcode 26.6 is unavailable.' >&2; exit 1; }
-{ xcodebuild -version; swift --version; uname -m; sw_vers; echo "ImageVersion=${ImageVersion:-unknown}"; } > artifacts/toolchain.txt
+{ sysctl hw.ncpu hw.memsize hw.model
+  xcodebuild -version; swift --version; uname -m; sw_vers; echo "ImageVersion=${ImageVersion:-unknown}"; } > artifacts/toolchain.txt
 swift --version | python3 -c 'import re,sys; s=sys.stdin.read(); m=re.search(r"Swift version (\d+)\.(\d+)",s); assert m and tuple(map(int,m.groups())) >= (6,3),s'
 # Xcode's Metal compiler is a separately downloadable component on some images.
 if ! xcrun metal --version > /dev/null 2>&1; then

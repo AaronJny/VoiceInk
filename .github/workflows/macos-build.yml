@@ -26,8 +26,77 @@ jobs:
           persist-credentials: false
       - name: Verify toolchain and prepare pinned Whisper
         run: bash scripts/ci/prepare.sh
-      - name: Build and run focused regression tests (without signing secrets)
-        run: bash scripts/ci/build.sh
+      - name: Compute toolchain and lockfile cache keys
+        id: cache-keys
+        run: python3 scripts/ci/cache-key.py
+      - name: Restore locked Swift packages
+        id: spm-cache
+        continue-on-error: true
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: .ci-build/SourcePackages
+          key: ${{ steps.cache-keys.outputs.spm-key }}
+          restore-keys: ${{ steps.cache-keys.outputs.spm-prefix }}
+      - name: Restore matching compiler intermediates
+        id: compile-cache
+        continue-on-error: true
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            .ci-build/Build/Intermediates.noindex
+            .ci-build/Build/Products
+            .ci-build/ModuleCache.noindex
+          key: ${{ steps.cache-keys.outputs.compile-key }}
+          restore-keys: ${{ steps.cache-keys.outputs.compile-prefix }}
+      - name: Record cache evidence
+        env:
+          SPM_HIT: ${{ steps.spm-cache.outputs.cache-hit }}
+          SPM_MATCH: ${{ steps.spm-cache.outputs.cache-matched-key }}
+          COMPILE_HIT: ${{ steps.compile-cache.outputs.cache-hit }}
+          COMPILE_MATCH: ${{ steps.compile-cache.outputs.cache-matched-key }}
+        run: |
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          result={k:os.getenv(k,'') for k in ['SPM_HIT','SPM_MATCH','COMPILE_HIT','COMPILE_MATCH']}
+          result['state']='warm-restored' if result['COMPILE_MATCH'] else 'cold'
+          Path('artifacts/cache-status.json').write_text(json.dumps(result,indent=2)+'\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write('Cache: '+json.dumps(result)+'\n\n')
+          PY
+      - name: Compile production app (${{ env.CI_BUILD_CONFIGURATION }})
+        env:
+          CI_COMPILE_CACHE_MATCH: ${{ steps.compile-cache.outputs.cache-matched-key }}
+          CI_SPM_CACHE_MATCH: ${{ steps.spm-cache.outputs.cache-matched-key }}
+        run: bash scripts/ci/build.sh build
+      - name: Save compiler intermediates (trusted pushes only)
+        if: >-
+          github.repository == 'AaronJny/VoiceInk' && github.event_name == 'push' &&
+          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/upgrade/') || github.ref == 'refs/heads/ci/cloud-baseline') &&
+          steps.compile-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            .ci-build/Build/Intermediates.noindex
+            .ci-build/Build/Products
+            .ci-build/ModuleCache.noindex
+          key: ${{ steps.cache-keys.outputs.compile-key }}
+      - name: Run seven regression suites
+        env:
+          CI_COMPILE_CACHE_MATCH: ${{ steps.compile-cache.outputs.cache-matched-key }}
+          CI_SPM_CACHE_MATCH: ${{ steps.spm-cache.outputs.cache-matched-key }}
+        run: bash scripts/ci/build.sh test
+      - name: Save locked Swift packages (trusted pushes only)
+        if: >-
+          github.repository == 'AaronJny/VoiceInk' && github.event_name == 'push' &&
+          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/upgrade/') || github.ref == 'refs/heads/ci/cloud-baseline') &&
+          steps.spm-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: .ci-build/SourcePackages
+          key: ${{ steps.cache-keys.outputs.spm-key }}
       - name: Package tested clean application (UNSIGNED intermediate)
         if: >-
           github.repository == 'AaronJny/VoiceInk' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/upgrade/') || github.ref == 'refs/heads/ci/cloud-baseline')
@@ -38,6 +107,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: unsigned-intermediate-${{ github.sha }}
+          overwrite: true
           path: artifacts/intermediate/*
           if-no-files-found: error
           retention-days: 3
@@ -46,6 +116,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: diagnostics-${{ github.sha }}
+          overwrite: true
           path: |
             artifacts/*.txt
             artifacts/*.json
@@ -88,6 +159,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: VoiceInk-arm64-${{ github.sha }}
+          overwrite: true
           path: |
             artifacts/VoiceInk-*.zip
             artifacts/build-info.json
@@ -96,20 +168,7 @@ jobs:
           retention-days: 14
       - name: Remove temporary signing material
         if: always()
-        run: |
-          rc=0
-          if [[ -f "$RUNNER_TEMP/voiceink-trust-added" ]]; then
-            if security remove-trusted-cert "$RUNNER_TEMP/voiceink-signing.cer"; then
-              rm -f "$RUNNER_TEMP/voiceink-trust-added"
-              echo 'Removed temporary codeSign trust during always cleanup.'
-            else
-              echo 'ERROR: temporary codeSign trust removal failed.' >&2
-              rc=1
-            fi
-          fi
-          security delete-keychain "$RUNNER_TEMP/voiceink-signing.keychain-db" >/dev/null 2>&1 || true
-          rm -f "$RUNNER_TEMP/voiceink-signing.p12" "$RUNNER_TEMP/voiceink-signing.cer"
-          exit "$rc"
+        run: python3 scripts/ci/cleanup-signing.py
       - name: Upload signing diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

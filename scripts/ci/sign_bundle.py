@@ -52,7 +52,7 @@ def verify(app):
         run('codesign', '--verify', '--strict', str(p))
         with tempfile.TemporaryDirectory() as tmp:
             prefix = str(Path(tmp) / 'cert')
-            run('codesign', '-d', '--extract-certificates', prefix, str(p))
+            run('codesign', '-d', '--extract-certificates=' + prefix, str(p))
             leaf = Path(prefix + '0').read_bytes()
             fingerprint = hashlib.sha1(leaf).hexdigest().upper()
             assert fingerprint == IDENTITY, (p, fingerprint)
