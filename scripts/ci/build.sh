@@ -3,6 +3,16 @@ set -euo pipefail
 mkdir -p artifacts
 configuration=${CI_BUILD_CONFIGURATION:-Release}
 [[ "$configuration" == Debug || "$configuration" == Release ]] || exit 1
+# v2.27 nests the filesystem-synchronized test group under Tests/.
+# Catch a source/group-path mismatch before spending time compiling the app.
+if grep -q 'path = Tests;' VoiceInk.xcodeproj/project.pbxproj; then
+  test_sources=Tests/VoiceInkTests
+else
+  test_sources=VoiceInkTests
+fi
+for suite in LegacyStatsCarryForwardTests SessionMetricWriteCoordinatorTests OllamaServerConfigurationTests ModeOllamaConfigurationTests MixedScriptTypographyNormalizerTests OnboardingLocalModelSelectionTests Qwen3ASRIntegrationTests; do
+  [[ -s "$test_sources/$suite.swift" ]] || { echo "Missing test source: $test_sources/$suite.swift" >&2; exit 1; }
+done
 common=( -project VoiceInk.xcodeproj -scheme VoiceInk -configuration "$configuration"
   -destination 'platform=macOS,arch=arm64' -derivedDataPath "$PWD/.ci-build"
   -xcconfig LocalBuild.xcconfig -skipMacroValidation -skipPackagePluginValidation
@@ -14,6 +24,11 @@ common=( -project VoiceInk.xcodeproj -scheme VoiceInk -configuration "$configura
 if ! xcodebuild "${common[@]}" build > artifacts/build.log 2>&1; then
   tail -100 artifacts/build.log; exit 1
 fi
+# Test hosting embeds .xctest bundles into the build product. Keep a clean
+# distribution copy before test injection, rather than shipping XCTest code.
+distribution="$RUNNER_TEMP/voiceink-distribution/VoiceInk.app"
+mkdir -p "$(dirname "$distribution")"
+ditto "$PWD/.ci-build/Build/Products/$configuration/VoiceInk.app" "$distribution"
 tests=(LegacyStatsCarryForwardTests SessionMetricWriteCoordinatorTests OllamaServerConfigurationTests
   ModeOllamaConfigurationTests MixedScriptTypographyNormalizerTests OnboardingLocalModelSelectionTests Qwen3ASRIntegrationTests)
 only=()

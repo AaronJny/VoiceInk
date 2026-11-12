@@ -23,6 +23,13 @@
 
 `ci/cloud-baseline` 用原定制代码和 Debug 先验证；升级分支用 Release。签名步骤仅在受信本仓分支的 push / 手动运行中获得既有 Secrets。产物应保留生产 Bundle ID 和原证书，不得回退 ad-hoc。检查嵌套代码与 zip 解压后签名。
 
+## CI 实测发现与修复
+
+- 旧定制基线已在 Xcode 26.6 / Swift 6.3.3 / ARM64 上编译并通过七组 38 项聚焦测试。
+- 新版 Release 应用已成功编译；首轮发现上游将测试父组移动到 `Tests/`，定制测试现已随之迁移至 `Tests/VoiceInkTests/`。CI 增加源文件路径预检查，避免空测试 bundle 被误当有效回归。
+- 新版 Assistant 追问路径已补齐初始 Mode endpoint 快照，后续不回退默认 Ollama；缺失 endpoint 明确失败。
+- 原自签名身份已成功导入 runner，但有效身份预检查不认可；正在验证不修改系统信任的直接签名路径，尚未声称云签名通过。
+
 ## 验证边界
 
 - 合并阶段的 whitespace、冲突标记、Python/shell/YAML/依赖 JSON 与变更 Swift 语法检查已完成。

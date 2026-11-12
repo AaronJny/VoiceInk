@@ -18,7 +18,12 @@ MACHO = {b'\xfe\xed\xfa\xce', b'\xce\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xcf\x
 
 
 def run(*args, **kw):
-    return subprocess.run(args, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
+    try:
+        return subprocess.run(args, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
+    except subprocess.CalledProcessError as error:
+        # These are only codesign/ditto commands; no credential arguments.
+        print(error.stderr.decode(errors='replace'), file=sys.stderr)
+        raise
 
 
 def code_paths(app):
@@ -38,6 +43,7 @@ def code_paths(app):
 
 
 def verify(app):
+    assert not list(app.rglob('*.xctest')), 'Test bundles must not ship in the daily application'
     run('codesign', '--verify', '--deep', '--strict', str(app))
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     assert info['CFBundleIdentifier'] == BUNDLE_ID, info['CFBundleIdentifier']

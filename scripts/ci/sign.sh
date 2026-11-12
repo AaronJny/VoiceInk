@@ -22,10 +22,12 @@ security import "$p12" -k "$keychain" -P "$SIGNING_CERTIFICATE_PASSWORD" -T /usr
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
 rm -f "$p12"
 unset SIGNING_CERTIFICATE_P12_BASE64 SIGNING_CERTIFICATE_PASSWORD password
+# Presence is distinct from OS trust: self-signed identities may be omitted by -v.
+# Try the exact original identity and require cryptographic/leaf verification below.
 # Do not alter system trust settings, create a replacement identity, or fall back to ad-hoc.
-security find-identity -v -p codesigning "$keychain" > artifacts/signing-identities.txt
+security find-identity -p codesigning "$keychain" > artifacts/signing-identities.txt
 grep -F "$expected" artifacts/signing-identities.txt > /dev/null || {
-  echo 'Original certificate is not a valid signing identity on this runner; inspect certificate trust.' >&2; exit 1;
+  echo 'Original certificate/private-key identity is missing from the temporary keychain.' >&2; exit 1;
 }
 export VOICEINK_SIGNING_KEYCHAIN="$keychain"
-python3 scripts/ci/sign_bundle.py "$PWD/.ci-build/Build/Products/${CI_BUILD_CONFIGURATION:-Release}/VoiceInk.app"
+python3 scripts/ci/sign_bundle.py "$RUNNER_TEMP/voiceink-distribution/VoiceInk.app"
