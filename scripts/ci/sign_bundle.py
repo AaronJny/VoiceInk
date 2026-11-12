@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory() as tmp:
     run('ditto', '-x', '-k', str(archive), tmp)
     verify(Path(tmp) / APP.name)
 metadata = {
-    'commit': sha, 'version': info['CFBundleShortVersionString'], 'build': info['CFBundleVersion'],
+    'commit': sha, 'packagingCommit': os.environ.get('VOICEINK_PACKAGING_COMMIT', sha), 'signingRunId': os.environ.get('GITHUB_RUN_ID'), 'version': info['CFBundleShortVersionString'], 'build': info['CFBundleVersion'],
     'bundleIdentifier': info['CFBundleIdentifier'], 'architecture': 'arm64',
     'certificateSHA1': IDENTITY, 'designatedRequirement': requirement.strip(),
     'entitlements': entitlements, 'signedCode': rows,
