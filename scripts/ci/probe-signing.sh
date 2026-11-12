@@ -16,6 +16,7 @@ cleanup() {
  rc=$?; trap - EXIT; echo 'Restoring original runner trust settings and keychain search list.'
  if [[ -f "$RUNNER_TEMP/trust-added" ]]; then
   if bounded sudo -n security trust-settings-export -d "$RUNNER_TEMP/trust-current.plist"; then
+   sudo -n chown "$(id -u):$(id -g)" "$RUNNER_TEMP/trust-current.plist"
    python3 - <<'PY' || rc=1
 import os,plistlib,pathlib
 p=pathlib.Path(os.environ['RUNNER_TEMP'])
@@ -28,6 +29,7 @@ PY
    if bounded sudo -n security trust-settings-import -d "$RUNNER_TEMP/trust-restored.plist"; then
     echo 'Removed only the original temporary certificate trust entry.'
     bounded sudo -n security trust-settings-export -d "$RUNNER_TEMP/trust-verify.plist" || rc=1
+    sudo -n chown "$(id -u):$(id -g)" "$RUNNER_TEMP/trust-verify.plist" || rc=1
     python3 - <<'PY' || rc=1
 import os,plistlib,pathlib
 p=pathlib.Path(os.environ['RUNNER_TEMP'])
@@ -77,6 +79,6 @@ printf 'int main(void) { return 0; }\n' > "$RUNNER_TEMP/probe.c"
 /usr/bin/clang "$RUNNER_TEMP/probe.c" -o "$RUNNER_TEMP/probe"
 bounded codesign --force --sign "$expected" --keychain "$keychain" --timestamp=none "$RUNNER_TEMP/probe"
 codesign --verify --strict --verbose=2 "$RUNNER_TEMP/probe"
-codesign -d --extract-certificates "$RUNNER_TEMP/probe-cert" "$RUNNER_TEMP/probe"
+codesign -d --extract-certificates="$RUNNER_TEMP/probe-cert" "$RUNNER_TEMP/probe"
 [[ "$(shasum "$RUNNER_TEMP/probe-cert0" | awk '{print toupper($1)}')" == "$expected" ]]
 echo 'Original certificate signature and fingerprint verified.'
