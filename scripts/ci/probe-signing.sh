@@ -9,6 +9,9 @@ expected=24F8BA788091EF77E65B03212711783CF66232C6
 keychain="$RUNNER_TEMP/voiceink-signing.keychain-db"
 p12="$RUNNER_TEMP/voiceink-signing.p12"
 cleanup() {
+  if [[ -f "$RUNNER_TEMP/voiceink-signing.cer" ]]; then
+    security remove-trusted-cert "$RUNNER_TEMP/voiceink-signing.cer" >/dev/null 2>&1 || true
+  fi
   security delete-keychain "$keychain" > /dev/null 2>&1 || true
   rm -f "$p12" "$RUNNER_TEMP/voiceink-signing.cer"
 }
@@ -23,7 +26,7 @@ security import "$p12" -k "$keychain" -P "$SIGNING_CERTIFICATE_PASSWORD" -T /usr
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
 rm -f "$p12"
 unset SIGNING_CERTIFICATE_P12_BASE64 SIGNING_CERTIFICATE_PASSWORD password
-# Do not alter system trust settings, create a replacement identity, or fall back to ad-hoc.
+# Use only the owner-approved temporary codeSign trust for the original certificate.
 security find-identity -p codesigning "$keychain" > artifacts/signing-identities.txt
 grep -F "$expected" artifacts/signing-identities.txt > /dev/null || {
   echo 'Original certificate is not a valid signing identity on this runner; inspect certificate trust.' >&2; exit 1;
@@ -35,6 +38,14 @@ security find-certificate -a -Z "$keychain"
 security list-keychains -d user
 security show-keychain-info "$keychain"
 security find-certificate -c "VoiceInk Local Dev" -p "$keychain" | openssl x509 -noout -subject -issuer -dates -fingerprint -sha256
+cert="$RUNNER_TEMP/voiceink-signing.cer"
+security find-certificate -c "VoiceInk Local Dev" -p "$keychain" > "$cert"
+actual_sha1=$(openssl x509 -in "$cert" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')
+actual_sha256=$(openssl x509 -in "$cert" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':')
+[[ "$actual_sha1" == "$expected" ]]
+[[ "$actual_sha256" == 0D8A10DA627B134F22C2B6AB7FB2D7CFE5E4A0B462D6BC2FF0C437F2013D7129 ]]
+security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$cert"
+security find-identity -v -p codesigning "$keychain" | grep -F "$expected"
 export VOICEINK_SIGNING_KEYCHAIN="$keychain"
 printf 'int main(void) { return 0; }\n' > "$RUNNER_TEMP/signing-probe.c"
 /usr/bin/clang "$RUNNER_TEMP/signing-probe.c" -o "$RUNNER_TEMP/signing-probe"
@@ -43,5 +54,5 @@ codesign --verify --strict --verbose=2 "$RUNNER_TEMP/signing-probe"
 codesign -d --extract-certificates "$RUNNER_TEMP/probe-cert" "$RUNNER_TEMP/signing-probe"
 actual=$(shasum "$RUNNER_TEMP/probe-cert0" | awk '{print toupper($1)}')
 test "$actual" = "$SIGNING_IDENTITY_SHA1"
-echo 'Direct signature and leaf fingerprint verified without changing trust.'
+echo 'Direct signature and leaf fingerprint verified with temporary codeSign-only trust.'
 rm -f "$RUNNER_TEMP/signing-probe.c" "$RUNNER_TEMP/signing-probe" "$RUNNER_TEMP/probe-cert0"
