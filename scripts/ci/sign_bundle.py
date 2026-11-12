@@ -63,7 +63,9 @@ def verify(app):
     for key, value in expected_entitlements.items():
         assert entitlements.get(key) == value, (key, entitlements.get(key))
     assert not any('icloud' in k.lower() for k in entitlements), entitlements
-    requirement = run('codesign', '-dr', '-', str(app)).stderr.decode()
+    requirement_output = run('codesign', '-dr', '-', str(app))
+    requirement = '\n'.join(line for line in (requirement_output.stdout + requirement_output.stderr).decode().splitlines() if line.startswith('designated =>'))
+    assert requirement, 'Missing designated requirement output'
     assert IDENTITY.lower() in requirement.lower(), requirement
     return info, rows, entitlements, requirement
 
