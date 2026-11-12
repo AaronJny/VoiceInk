@@ -28,6 +28,13 @@ security find-identity -p codesigning "$keychain" > artifacts/signing-identities
 grep -F "$expected" artifacts/signing-identities.txt > /dev/null || {
   echo 'Original certificate is not a valid signing identity on this runner; inspect certificate trust.' >&2; exit 1;
 }
+echo 'Public identity validity diagnostics:'
+security find-identity -p codesigning "$keychain"
+security find-identity -v -p codesigning "$keychain"
+security find-certificate -a -Z "$keychain"
+security list-keychains -d user
+security show-keychain-info "$keychain"
+security find-certificate -c "VoiceInk Local Dev" -p "$keychain" | openssl x509 -noout -subject -issuer -dates -fingerprint -sha256
 export VOICEINK_SIGNING_KEYCHAIN="$keychain"
 printf 'int main(void) { return 0; }\n' > "$RUNNER_TEMP/signing-probe.c"
 /usr/bin/clang "$RUNNER_TEMP/signing-probe.c" -o "$RUNNER_TEMP/signing-probe"
