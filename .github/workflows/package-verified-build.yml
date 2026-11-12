@@ -9,7 +9,7 @@ permissions:
 jobs:
   package:
     if: github.repository == 'AaronJny/VoiceInk' && github.ref == 'refs/heads/ci/package-v2.27'
-    runs-on: macos-26
+    runs-on: macos-15-intel
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
