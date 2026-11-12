@@ -1,6 +1,6 @@
 # 私有 macOS 构建
 
-`macos-build.yml` 在 `main`、`upgrade/**`、`ci/cloud-baseline` 推送和手动触发时构建；PR 仅进行无私钥编译和聚焦测试，不生成正式签名产物。构建 Secrets 只在测试成功后的签名步骤注入。该工作流用于受信的本仓代码，不应启用 `pull_request_target` 或将签名授权给外部贡献者分支。
+`macos-build.yml` 在 `main`、`upgrade/**`、`ci/cloud-baseline` 推送和手动触发时构建；PR 仅进行无私钥编译和聚焦测试，不生成正式签名产物。构建与签名分为两个 job；Secrets 只在测试成功后的签名 job 的签名步骤注入。该工作流用于受信的本仓代码，不应启用 `pull_request_target` 或将签名授权给外部贡献者分支。
 
 - `ci/cloud-baseline`：现有 2.11 定制版，Debug + 原有锁定依赖。
 - `upgrade/**` / `main`：2.27，Release + 2.27 锁定依赖。
@@ -9,7 +9,8 @@
 - 官方 Whisper v1.9.2 XCFramework 的 SHA-256 固定为 `af74fed13ea7f2d5ca2a39d9f58ec177713fafd7cab63aef4e27b79f3ceca80b`。版本与 digest 源自官方 release API，不依赖本机已有框架。
 - 构建/测试使用 `LOCAL_BUILD`，不接入 CloudKit。CI 不上传用户数据、真实音频或 ASR 模型，且不运行无输入会空通过的 `ASRBenchmarkTests`。
 - 现有 Secret：`SIGNING_CERTIFICATE_P12_BASE64`、`SIGNING_CERTIFICATE_PASSWORD`；变量 `SIGNING_IDENTITY_SHA1` 必须与交接原身份完全一致。
-- 临时钥匙串仅在签名步骤存在，退出及 always 清理都删除；不创建替代证书，不自动回退 ad-hoc，不更改系统信任。导入后确认原证书/私钥身份，直接指定原指纹签名并严格校验；若 codesign 确实因信任失败，应单独处理，不修改信任或静默换证书。
+- 临时钥匙串仅在签名步骤存在。先核对原证书 SHA-1 和 SHA-256，再仅在临时 runner 的用户域授予该证书 codeSign 用途信任（无系统域、无其他用途）；EXIT 与 always 清理均移除信任并删除钥匙串和证书。不修改用户 Mac，不创建替代证书，不回退 ad-hoc。
+- build 成功后将测试前的干净 app 以 ditto 封为 `UNSIGNED-VoiceInk-arm64.zip` 中间工件，明确不可直接安装，保留 3 天。附源码 commit、run ID、构建配置、工具链、测试摘要及 SHA-256。sign 仅下载同一 run 工件，校验后签名。失败时仅重跑 sign job，无需重复全量编译；中间工件过期后需重跑 build。
 - 在测试前暂存干净 app，不把测试注入的 .xctest 交付给用户。从内向外签名、逐个可执行文件核对证书指纹，并验证主包 entitlements、生产 ID 与 designated requirement。zip 使用 `ditto`，解压后重做签名核验。
 - 应用工件包含 zip、`build-info.json` 与工具链信息。日志和 xcresult 在独立诊断工件中，保留 7 天；应用保留 14 天。
 
@@ -19,3 +20,5 @@
 - https://github.com/actions/runner-images/blob/main/README.md
 - https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md
 - https://api.github.com/repos/ggml-org/whisper.cpp/releases/tags/v1.9.2
+
+- https://api.github.com/repos/actions/download-artifact/git/ref/tags/v4.3.0

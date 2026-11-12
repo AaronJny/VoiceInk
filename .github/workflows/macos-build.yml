@@ -28,6 +28,50 @@ jobs:
         run: bash scripts/ci/prepare.sh
       - name: Build and run focused regression tests (without signing secrets)
         run: bash scripts/ci/build.sh
+      - name: Package tested clean application (UNSIGNED intermediate)
+        if: >-
+          github.repository == 'AaronJny/VoiceInk' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/upgrade/') || github.ref == 'refs/heads/ci/cloud-baseline')
+        run: bash scripts/ci/package-intermediate.sh
+      - name: Upload UNSIGNED build intermediate
+        if: >-
+          github.repository == 'AaronJny/VoiceInk' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/upgrade/') || github.ref == 'refs/heads/ci/cloud-baseline')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unsigned-intermediate-${{ github.sha }}
+          path: artifacts/intermediate/*
+          if-no-files-found: error
+          retention-days: 3
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: diagnostics-${{ github.sha }}
+          path: |
+            artifacts/*.txt
+            artifacts/*.json
+            artifacts/*.log
+            artifacts/*.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
+  sign:
+    needs: build
+    if: >-
+      github.repository == 'AaronJny/VoiceInk' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/upgrade/') || github.ref == 'refs/heads/ci/cloud-baseline')
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Download same-run UNSIGNED intermediate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: unsigned-intermediate-${{ github.sha }}
+          path: artifacts/intermediate
+      - name: Verify source, digest and restore clean app
+        run: bash scripts/ci/restore-intermediate.sh
       - name: Sign and verify personal artifact
         id: signing
         if: >-
@@ -53,17 +97,27 @@ jobs:
       - name: Remove temporary signing material
         if: always()
         run: |
+          rc=0
+          if [[ -f "$RUNNER_TEMP/voiceink-trust-added" ]]; then
+            if security remove-trusted-cert "$RUNNER_TEMP/voiceink-signing.cer"; then
+              rm -f "$RUNNER_TEMP/voiceink-trust-added"
+              echo 'Removed temporary codeSign trust during always cleanup.'
+            else
+              echo 'ERROR: temporary codeSign trust removal failed.' >&2
+              rc=1
+            fi
+          fi
           security delete-keychain "$RUNNER_TEMP/voiceink-signing.keychain-db" >/dev/null 2>&1 || true
           rm -f "$RUNNER_TEMP/voiceink-signing.p12" "$RUNNER_TEMP/voiceink-signing.cer"
-      - name: Upload build diagnostics
+          exit "$rc"
+      - name: Upload signing diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: diagnostics-${{ github.sha }}
+          name: signing-diagnostics-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             artifacts/*.txt
             artifacts/*.json
             artifacts/*.log
-            artifacts/*.xcresult
           if-no-files-found: ignore
           retention-days: 7

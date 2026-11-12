@@ -249,6 +249,11 @@ struct SettingsView: View {
                 )
                 .disabled(launchAtLoginManager.isUpdating)
 
+                #if LOCAL_BUILD
+                Text("此定制版通过自有 GitHub 构建产物更新，已停用官方自动更新，避免覆盖个性化功能。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                #else
                 Toggle(
                     "Automatically Check for Updates",
                     isOn: Binding(
@@ -256,6 +261,7 @@ struct SettingsView: View {
                         set: { updaterViewModel.setAutomaticallyChecksForUpdates($0) }
                     ))
                     .help("Checks for updates in the background while VoiceInk is running.")
+                #endif
 
                 Toggle("Show Announcements", isOn: $enableAnnouncements)
                     .onChange(of: enableAnnouncements) { _, newValue in

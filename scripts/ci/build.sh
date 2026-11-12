@@ -40,10 +40,23 @@ fi
 # Do not mistake an empty test run (or ASRBenchmark's no-input return) for validation.
 xcrun xcresulttool get test-results summary --path artifacts/FocusedTests.xcresult > artifacts/test-summary.json
 python3 - <<'PY'
-import json
+import json,re
+from pathlib import Path
 s=json.load(open('artifacts/test-summary.json'))
 assert s.get('totalTestCount',0)>0, 'No tests executed'
 assert s.get('failedTests',0)==0, 'Failed tests'
+assert s.get('skippedTests',0)==0, 'Skipped tests'
+# xcresult summary has counts but no suite list. Require each observed Swift
+# Testing suite completion line as well, rather than accepting one partial suite.
+log=Path('artifacts/tests.log').read_text()
+suites=['Legacy stats carry-forward','Mixed-script typography normalization',
+        'ModeOllamaConfigurationTests','OllamaServerConfigurationTests',
+        'Onboarding local model selection','Qwen3-ASR integration',
+        'Session metric write coordination']
+for suite in suites:
+    assert re.search(r'✔ Suite \"?'+re.escape(suite)+r'\"? passed after ',log), 'Missing passing suite: '+suite
+assert re.search(r'Test run with \d+ tests in 7 suites passed',log), 'Incomplete focused suite run'
+
 PY
 app="$PWD/.ci-build/Build/Products/$configuration/VoiceInk.app"
 [[ "$('/usr/libexec/PlistBuddy' -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" == com.prakashjoshipax.VoiceInk ]]

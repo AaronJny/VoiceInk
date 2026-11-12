@@ -15,11 +15,13 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     private let defaults = UserDefaults.standard
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "updates")
     private var subscriptions = Set<AnyCancellable>()
+    #if !LOCAL_BUILD
     private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: false,
         updaterDelegate: self,
         userDriverDelegate: nil
     )
+    #endif
 
     @Published private(set) var canCheckForUpdates = false
     @Published private(set) var automaticallyChecksForUpdates = false
@@ -27,6 +29,7 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     override init() {
         super.init()
 
+        #if !LOCAL_BUILD
         let updater = updaterController.updater
 
         // The Dashboard-only implementation kept its own preference and forced
@@ -53,23 +56,37 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
             .store(in: &subscriptions)
 
         updaterController.startUpdater()
+        #endif
+        // Custom LOCAL_BUILD releases are updated from our GitHub build artifacts.
+        // Do not instantiate Sparkle or migrate/change the official update preferences.
     }
 
     func setAutomaticallyChecksForUpdates(_ value: Bool) {
+        #if !LOCAL_BUILD
         guard automaticallyChecksForUpdates != value else { return }
         updaterController.updater.automaticallyChecksForUpdates = value
+        #endif
     }
 
     func checkForUpdates() {
+        #if !LOCAL_BUILD
         guard canCheckForUpdates else { return }
 
         // This action also brings an existing update/progress window into focus.
         // Manual checks remain available when automatic checks are off.
         logger.notice("Update check requested source=manual")
         updaterController.checkForUpdates(nil)
+        #endif
     }
 
     func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
+        #if LOCAL_BUILD
+        throw NSError(
+            domain: "com.prakashjoshipax.voiceink.updates",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "This custom build is updated through its GitHub build artifacts."]
+        )
+        #else
         // Protect every non-manual entry point, including a scheduled check
         // queued just before the user disabled automatic checks.
         guard updateCheck == .updates || updater.automaticallyChecksForUpdates else {
@@ -81,6 +98,7 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
             )
         }
         logger.notice("Update check started kind=\(updateCheck.rawValue, privacy: .public)")
+        #endif
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
