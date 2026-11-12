@@ -1,0 +1,65 @@
+name: macOS personal build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'upgrade/**', 'ci/cloud-baseline']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      CI_BUILD_CONFIGURATION: ${{ github.ref == 'refs/heads/ci/cloud-baseline' && 'Debug' || 'Release' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Verify toolchain and prepare pinned Whisper
+        run: bash scripts/ci/prepare.sh
+      - name: Build and run focused regression tests (without signing secrets)
+        run: bash scripts/ci/build.sh
+      - name: Sign and verify personal artifact
+        if: >-
+          github.repository == 'AaronJny/VoiceInk' &&
+          github.event_name != 'pull_request' &&
+          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/upgrade/') || github.ref == 'refs/heads/ci/cloud-baseline')
+        env:
+          SIGNING_CERTIFICATE_P12_BASE64: ${{ secrets.SIGNING_CERTIFICATE_P12_BASE64 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY_SHA1: ${{ vars.SIGNING_IDENTITY_SHA1 }}
+        run: bash scripts/ci/sign.sh
+      - name: Upload signed application
+        if: success() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: VoiceInk-arm64-${{ github.sha }}
+          path: artifacts/VoiceInk-*.zip
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/voiceink-signing.keychain-db" >/dev/null 2>&1 || true
+          rm -f "$RUNNER_TEMP/voiceink-signing.p12" "$RUNNER_TEMP/voiceink-signing.cer"
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: diagnostics-${{ github.sha }}
+          path: |
+            artifacts/*.txt
+            artifacts/*.json
+            artifacts/*.log
+            artifacts/*.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
