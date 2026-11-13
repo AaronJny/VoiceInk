@@ -1,3 +1,5 @@
+> **Unofficial personal customization** of [VoiceInk](https://github.com/Beingpax/VoiceInk) by [Pax](https://github.com/Beingpax), maintained by AaronJny. Original authorship and GPL-3.0 licensing are retained; the upstream README follows below.
+
 <div align="center">
   <img src="VoiceInk/Assets.xcassets/AppIcon.appiconset/256-mac.png" width="180" height="180" />
   <h1>VoiceInk</h1>
