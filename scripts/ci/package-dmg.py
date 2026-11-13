@@ -16,7 +16,11 @@ OUTPUT = ROOT / 'dmg-output'
 OUTPUT.mkdir(exist_ok=True)
 
 def run(*args):
-    return subprocess.run(args, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        return subprocess.run(args, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as error:
+        print(error.stderr.decode(errors='replace'))
+        raise
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -38,7 +42,7 @@ def verify(app, metadata):
     assert info['CFBundleShortVersionString'] == '2.27'
     assert info['CFBundleVersion'] == '227'
     assert not list(app.rglob('*.xctest'))
-    run('lipo', '-verify_arch', 'arm64', str(app / 'Contents/MacOS' / info['CFBundleExecutable']))
+    run('lipo', str(app / 'Contents/MacOS' / info['CFBundleExecutable']), '-verify_arch', 'arm64')
     assert len(metadata['signedCode']) == 20
     for row in metadata['signedCode']:
         path = app / row['path']
