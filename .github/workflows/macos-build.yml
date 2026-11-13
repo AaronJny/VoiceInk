@@ -82,7 +82,7 @@ jobs:
             .ci-build/Build/Products
             .ci-build/ModuleCache.noindex
           key: ${{ steps.cache-keys.outputs.compile-key }}
-      - name: Run seven regression suites
+      - name: Run eight regression suites
         env:
           CI_COMPILE_CACHE_MATCH: ${{ steps.compile-cache.outputs.cache-matched-key }}
           CI_SPM_CACHE_MATCH: ${{ steps.spm-cache.outputs.cache-matched-key }}

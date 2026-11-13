@@ -16,7 +16,6 @@ enum AutoLearnReviewEligibility {
 }
 
 struct AutoLearnAIReviewer {
-    @MainActor private static let aiService = AIService()
 
     private struct Pair: Encodable {
         let id: String
@@ -69,9 +68,20 @@ struct AutoLearnAIReviewer {
             Set(pairs.map(\.id)).count == pairs.count else { throw Failure.invalidCandidates }
         guard !pairs.isEmpty else { return [] }
         let payload = String(decoding: try JSONEncoder().encode(pairs), as: UTF8.self)
-        let completion = try await Self.aiService.performChatCompletion(provider: provider,
+        let ollamaURL: URL?
+        if provider == .ollama {
+            guard let address = selection.ollamaBaseURL, let url = URL(string: address),
+                ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil
+            else { throw EnhancementError.notConfigured }
+            ollamaURL = url
+        } else {
+            ollamaURL = nil
+        }
+        // Read current saved configuration, not a process-lifetime stale copy.
+        let aiService = AIService()
+        let completion = try await aiService.performChatCompletion(provider: provider,
             modelName: selection.modelName, messages: [.user(payload)],
-            systemPrompt: Self.instructions, localUserPrompt: payload,
+            systemPrompt: Self.instructions, localUserPrompt: payload, ollamaBaseURL: ollamaURL,
             timeout: EnhancementRequestSettings.timeout,
             retryOnTimeout: EnhancementRequestSettings.retryOnTimeout)
         try Task.checkCancellation()

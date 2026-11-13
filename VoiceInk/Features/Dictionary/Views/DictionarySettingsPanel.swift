@@ -31,7 +31,8 @@ struct DictionarySettingsPanel: View {
     @AppStorage(AutoLearnSettings.reviewerProviderKey) private var reviewerProvider = ""
     @AppStorage(AutoLearnSettings.reviewerModelKey) private var reviewerModel = ""
     @AppStorage(AutoLearnSettings.aiReviewModeKey) private var aiReviewMode = AutoLearnSettings.AIReviewMode.automatic
-    @StateObject private var reviewerAIService = AIService()
+    @AppStorage(AutoLearnSettings.reviewerOllamaServerKey) private var reviewerOllamaServerID = ""
+    @EnvironmentObject private var reviewerAIService: AIService
     @State private var pendingReviewCount = 0
     @State private var isBackgroundReviewing = false
     @State private var isRequestingReview = false
@@ -90,7 +91,9 @@ struct DictionarySettingsPanel: View {
         .task {
             await checkAutoLearnData()
             await refreshPendingReviewState()
-            _ = await reviewerAIService.refreshOllamaAvailability()
+            if let provider = AIProvider(rawValue: reviewerProvider) {
+                await refreshReviewModels(for: provider)
+            }
         }
         .onChange(of: reviewerConfiguration) { _, _ in
             reviewError = nil
@@ -324,11 +327,12 @@ struct DictionarySettingsPanel: View {
     }
 
     private var reviewerConfiguration: AutoLearnSettings.ReviewerSelection {
-        .init(providerName: reviewerProvider, modelName: reviewerModel)
+        AutoLearnSettings.reviewerSelection
+            ?? .init(providerName: reviewerProvider, modelName: reviewerModel)
     }
 
     private var reviewProviders: [AIProvider] {
-        reviewerAIService.connectedProviders.filter { $0 != .voiceInkRefine }
+        reviewerAIService.configuredProviders.filter { $0 != .voiceInkRefine }
     }
 
     @ViewBuilder
@@ -344,6 +348,17 @@ struct DictionarySettingsPanel: View {
             }
         }
         if let provider = AIProvider(rawValue: reviewerProvider), provider != .voiceInkRefine {
+            if provider == .ollama {
+                Picker("Server", selection: reviewServerSelection) {
+                    Text("Default").tag("")
+                    ForEach(reviewerAIService.ollamaServers) { server in
+                        Text(server.name).tag(server.id.uuidString)
+                    }
+                    if !reviewerOllamaServerID.isEmpty, selectedReviewServer == nil {
+                        Text("Server unavailable").tag(reviewerOllamaServerID)
+                    }
+                }
+            }
             if provider == .localCLI {
                 LabeledContent("AI Model", value: "Default")
             } else {
@@ -368,12 +383,34 @@ struct DictionarySettingsPanel: View {
 
     private var reviewProviderSelection: Binding<String> {
         Binding(get: { reviewerProvider }, set: { providerName in
+            if providerName == AIProvider.ollama.rawValue, reviewerOllamaServerID.isEmpty {
+                reviewerOllamaServerID = reviewerAIService.defaultOllamaServerID?.uuidString ?? ""
+            }
             reviewerModel = AIProvider(rawValue: providerName).map { defaultReviewModel(for: $0) } ?? ""
             reviewerProvider = providerName
         })
     }
 
+    private var selectedReviewServer: OllamaServerConfiguration? {
+        if reviewerOllamaServerID.isEmpty {
+            return reviewerAIService.ollamaServerConfiguration(id: nil)
+        }
+        guard let id = UUID(uuidString: reviewerOllamaServerID) else { return nil }
+        return reviewerAIService.ollamaServerConfiguration(id: id)
+    }
+
+    private var reviewServerSelection: Binding<String> {
+        Binding(get: { reviewerOllamaServerID }, set: { serverID in
+            reviewerOllamaServerID = serverID
+            reviewerModel = selectedReviewServer?.preferredModel ?? ""
+            Task { await refreshReviewModels(for: .ollama) }
+        })
+    }
+
     private func defaultReviewModel(for provider: AIProvider) -> String {
+        if provider == .ollama {
+            return selectedReviewServer?.preferredModel ?? ""
+        }
         let selected = reviewerAIService.selectedModel(for: provider)
         let models = reviewerAIService.availableModels(for: provider)
         if provider.supportsCustomModelID || provider == .localCLI || models.contains(selected) { return selected }
@@ -383,14 +420,22 @@ struct DictionarySettingsPanel: View {
     @MainActor
     private func refreshReviewModels(for provider: AIProvider) async {
         switch provider {
-        case .ollama: _ = await reviewerAIService.refreshOllamaAvailability()
+        case .ollama:
+            if let server = selectedReviewServer {
+                _ = await reviewerAIService.refreshOllamaServer(id: server.id)
+            }
         case .openRouter: await reviewerAIService.fetchOpenRouterModels()
         default: break
         }
     }
 
     private func reviewModels(for provider: AIProvider) -> [String] {
-        var models = reviewerAIService.availableModels(for: provider)
+        var models: [String]
+        if provider == .ollama {
+            models = selectedReviewServer.map { reviewerAIService.availableOllamaModels(serverID: $0.id) } ?? []
+        } else {
+            models = reviewerAIService.availableModels(for: provider)
+        }
         if !reviewerModel.isEmpty, !models.contains(reviewerModel) { models.append(reviewerModel) }
         return models
     }

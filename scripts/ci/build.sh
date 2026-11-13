@@ -29,7 +29,7 @@ if grep -q 'path = Tests;' VoiceInk.xcodeproj/project.pbxproj; then
 else
   test_sources=VoiceInkTests
 fi
-for suite in LegacyStatsCarryForwardTests SessionMetricWriteCoordinatorTests OllamaServerConfigurationTests ModeOllamaConfigurationTests MixedScriptTypographyNormalizerTests OnboardingLocalModelSelectionTests Qwen3ASRIntegrationTests; do
+for suite in LegacyStatsCarryForwardTests SessionMetricWriteCoordinatorTests OllamaServerConfigurationTests ModeOllamaConfigurationTests MixedScriptTypographyNormalizerTests OnboardingLocalModelSelectionTests Qwen3ASRIntegrationTests AutoLearnConfigurationTests; do
   [[ -s "$test_sources/$suite.swift" ]] || { echo "Missing test source: $test_sources/$suite.swift" >&2; exit 1; }
 done
 common=( -project VoiceInk.xcodeproj -scheme VoiceInk -configuration "$configuration"
@@ -55,7 +55,7 @@ ditto "$PWD/.ci-build/Build/Products/$configuration/VoiceInk.app" "$distribution
 fi
 if [[ "$stage" == all || "$stage" == test ]]; then
 tests=(LegacyStatsCarryForwardTests SessionMetricWriteCoordinatorTests OllamaServerConfigurationTests
-  ModeOllamaConfigurationTests MixedScriptTypographyNormalizerTests OnboardingLocalModelSelectionTests Qwen3ASRIntegrationTests)
+  ModeOllamaConfigurationTests MixedScriptTypographyNormalizerTests OnboardingLocalModelSelectionTests Qwen3ASRIntegrationTests AutoLearnConfigurationTests)
 only=()
 for test in "${tests[@]}"; do only+=( "-only-testing:VoiceInkTests/$test" ); done
 if ! xcodebuild "${common[@]}" -parallel-testing-enabled NO "${only[@]}" \
@@ -77,10 +77,10 @@ log=Path('artifacts/tests.log').read_text()
 suites=['Legacy stats carry-forward','Mixed-script typography normalization',
         'ModeOllamaConfigurationTests','OllamaServerConfigurationTests',
         'Onboarding local model selection','Qwen3-ASR integration',
-        'Session metric write coordination']
+        'Session metric write coordination','AutoLearn configuration']
 for suite in suites:
     assert re.search(r'✔ Suite \"?'+re.escape(suite)+r'\"? passed after ',log), 'Missing passing suite: '+suite
-assert re.search(r'Test run with \d+ tests in 7 suites passed',log), 'Incomplete focused suite run'
+assert re.search(r'Test run with \d+ tests in 8 suites passed',log), 'Incomplete focused suite run'
 
 PY
 fi

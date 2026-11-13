@@ -10,6 +10,7 @@ private enum OllamaTransportTestError: Error {
 }
 
 private final class OllamaTransportSpy: OllamaTransport, @unchecked Sendable {
+    var onFetch: (() -> Void)?
     private let shouldFailFetch: Bool
     private var failures: [LLMKitError]
     private(set) var generationCount = 0
@@ -29,6 +30,7 @@ private final class OllamaTransportSpy: OllamaTransport, @unchecked Sendable {
     }
 
     func fetchModels(baseURL: URL) async throws -> [OllamaModel] {
+        onFetch?()
         if shouldFailFetch { throw OllamaTransportTestError.unavailable }
         return []
     }
@@ -83,6 +85,111 @@ private final class OllamaTransportSpy: OllamaTransport, @unchecked Sendable {
 
 @Suite(.serialized)
 struct OllamaServerConfigurationTests {
+    @MainActor
+    @Test func refreshCannotApplyTagsFromPreviousEndpoint() async throws {
+        let defaults = makeDefaults()
+        let transport = OllamaTransportSpy()
+        let refreshing = OllamaService(userDefaults: defaults, transport: transport)
+        let remote = refreshing.addServer(name: "Remote", baseURL: "http://old:11434")
+        let editor = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        transport.onFetch = {
+            var changed = remote
+            changed.baseURL = "http://new:11434"
+            changed.preferredModel = "ornith-1.5:9b"
+            editor.updateServer(changed)
+        }
+        _ = await refreshing.refresh(serverID: remote.id)
+        let restored = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        #expect(restored.server(withID: remote.id)?.baseURL == "http://new:11434")
+        #expect(restored.server(withID: remote.id)?.preferredModel == "ornith-1.5:9b")
+        #expect(refreshing.fetchedModelsByServerID[remote.id] == nil)
+        #expect(refreshing.status(forServerID: remote.id) == .unknown)
+    }
+
+    @MainActor
+    @Test func editingEndpointImmediatelyInvalidatesConnectionAndFetchedTags() async throws {
+        let service = OllamaService(userDefaults: makeDefaults(), transport: OllamaTransportSpy())
+        var remote = service.addServer(
+            name: "Remote", baseURL: "http://old:11434", preferredModel: "ornith-1.5:9b")
+        _ = await service.refresh(serverID: remote.id)
+        #expect(service.status(forServerID: remote.id).isConnected)
+        #expect(service.fetchedModelsByServerID[remote.id] != nil)
+        remote.baseURL = "http://new:11434"
+        service.updateServer(remote)
+        #expect(service.status(forServerID: remote.id) == .unknown)
+        #expect(service.fetchedModelsByServerID[remote.id] == nil)
+        #expect(service.server(withID: remote.id)?.preferredModel == "ornith-1.5:9b")
+    }
+
+    @Test func editorRestoresRemoteSelectionWithoutChangingDefault() {
+        let local = OllamaServerConfiguration(name: "Local", baseURL: "http://localhost:11434")
+        let remote = OllamaServerConfiguration(name: "Remote", baseURL: "http://remote:11434")
+        #expect(OllamaServerConfiguration.editorSelection(
+            savedID: remote.id, defaultID: local.id, servers: [local, remote]) == remote.id)
+        #expect(OllamaServerConfiguration.editorSelection(
+            savedID: remote.id, defaultID: local.id, servers: [local]) == local.id)
+    }
+
+    @MainActor
+    @Test func manualRemoteModelSurvivesEmptyTagsAndReload() async throws {
+        let defaults = makeDefaults()
+        let service = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        let remote = service.addServer(name: "Remote", baseURL: "http://remote:11434")
+        service.setPreferredModel("ornith-1.5:9b", forServerID: remote.id)
+        _ = await service.refresh(serverID: remote.id)
+        #expect(service.modelNames(forServerID: remote.id).contains("ornith-1.5:9b"))
+        let restored = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        #expect(restored.server(withID: remote.id)?.preferredModel == "ornith-1.5:9b")
+        #expect(restored.modelNames(forServerID: remote.id).contains("ornith-1.5:9b"))
+    }
+
+    @Test func staleInstanceEditsPreserveOtherInstancesDefaultAndModel() throws {
+        let defaults = makeDefaults()
+        let first = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        let remote = first.addServer(name: "Remote", baseURL: "http://remote:11434")
+        let stale = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        first.setPreferredModel("ornith-1.5:9b", forServerID: remote.id)
+        first.setDefaultServer(withID: remote.id)
+        var renamed = remote
+        renamed.name = "Renamed Remote"
+        stale.updateServer(renamed)
+        let restored = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        #expect(restored.defaultServerID == remote.id)
+        #expect(restored.server(withID: remote.id)?.preferredModel == "ornith-1.5:9b")
+        #expect(restored.server(withID: remote.id)?.name == "Renamed Remote")
+    }
+
+    @MainActor
+    @Test func refreshDoesNotOverwriteConcurrentPreferenceChanges() async throws {
+        let defaults = makeDefaults()
+        let transport = OllamaTransportSpy()
+        let refreshing = OllamaService(userDefaults: defaults, transport: transport)
+        let remote = refreshing.addServer(name: "Remote", baseURL: "http://remote:11434")
+        let editor = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        transport.onFetch = {
+            editor.setPreferredModel("ornith-1.5:9b", forServerID: remote.id)
+            editor.setDefaultServer(withID: remote.id)
+        }
+        _ = await refreshing.refresh(serverID: remote.id)
+        let restored = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        #expect(restored.defaultServerID == remote.id)
+        #expect(restored.server(withID: remote.id)?.preferredModel == "ornith-1.5:9b")
+    }
+
+    @MainActor
+    @Test func refreshCannotResurrectServerDeletedWhileAwaitingTags() async throws {
+        let defaults = makeDefaults()
+        let transport = OllamaTransportSpy()
+        let refreshing = OllamaService(userDefaults: defaults, transport: transport)
+        let remote = refreshing.addServer(name: "Remote", baseURL: "http://remote:11434")
+        let editor = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        transport.onFetch = { editor.removeServer(withID: remote.id) }
+        _ = await refreshing.refresh(serverID: remote.id)
+        let restored = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        #expect(restored.server(withID: remote.id) == nil)
+        #expect(refreshing.fetchedModelsByServerID[remote.id] == nil)
+    }
+
     @Test func migratesLegacySettingsOnceWithoutDeletingThem() throws {
         let defaults = makeDefaults()
         defaults.set("http://legacy-host:11434", forKey: "ollamaBaseURL")

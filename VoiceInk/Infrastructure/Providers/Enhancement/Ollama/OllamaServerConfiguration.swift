@@ -8,6 +8,14 @@ struct OllamaServerConfiguration: Codable, Identifiable, Equatable {
     var preferredModel: String
     var lastKnownModelNames: [String]
 
+    static func editorSelection(
+        savedID: UUID?, defaultID: UUID?, servers: [OllamaServerConfiguration]
+    ) -> UUID? {
+        if let savedID, servers.contains(where: { $0.id == savedID }) { return savedID }
+        if let defaultID, servers.contains(where: { $0.id == defaultID }) { return defaultID }
+        return servers.first?.id
+    }
+
     init(
         id: UUID = UUID(),
         name: String,

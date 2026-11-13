@@ -6,6 +6,7 @@ enum AutoLearnSettings {
     static let defaultMinimumCorrections = 1
     static let reviewerProviderKey = "AutoLearnDictionaryReviewerProvider"
     static let reviewerModelKey = "AutoLearnDictionaryReviewerModel"
+    static let reviewerOllamaServerKey = "AutoLearnDictionaryReviewerOllamaServerID"
     static let aiReviewModeKey = "AutoLearnDictionaryAIReviewMode"
 
     enum AIReviewMode: String {
@@ -20,9 +21,17 @@ enum AutoLearnSettings {
     struct ReviewerSelection: Equatable, Sendable {
         let providerName: String
         let modelName: String
+        var ollamaServerID: String? = nil
+        var ollamaBaseURL: String? = nil
 
-        var configurationID: String { "pairs-v3|\(providerName)|\(modelName)" }
-        var legacyConfigurationID: String { "legacy-2.21|\(providerName)|\(modelName)" }
+        // Approval belongs to an endpoint as well as a model. Never reuse an
+        // approval after switching servers (including editing a server URL).
+        private var endpointSuffix: String {
+            guard providerName == AIProvider.ollama.rawValue else { return "" }
+            return "|server=\(ollamaServerID ?? "missing")|url=\(ollamaBaseURL ?? "missing")"
+        }
+        var configurationID: String { "pairs-v3|\(providerName)|\(modelName)\(endpointSuffix)" }
+        var legacyConfigurationID: String { "legacy-2.21|\(providerName)|\(modelName)\(endpointSuffix)" }
     }
 
     private static let legacyProviderKey = "AutoLearnDictionaryProvider"
@@ -30,11 +39,25 @@ enum AutoLearnSettings {
     private static let legacyAIReviewEnabledKey = "AutoLearnDictionaryAIReviewEnabled"
 
     static var reviewerSelection: ReviewerSelection? {
-        let defaults = UserDefaults.standard
+        reviewerSelection(defaults: .standard)
+    }
+
+    static func reviewerSelection(defaults: UserDefaults) -> ReviewerSelection? {
         guard let provider = defaults.string(forKey: reviewerProviderKey), !provider.isEmpty else { return nil }
         let model = (defaults.string(forKey: reviewerModelKey) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         // Keep explicit AI selections so configuration errors leave corrections pending.
-        return ReviewerSelection(providerName: provider, modelName: model)
+        guard provider == AIProvider.ollama.rawValue else {
+            return ReviewerSelection(providerName: provider, modelName: model)
+        }
+        let savedID = defaults.string(forKey: reviewerOllamaServerKey) ?? ""
+        let payload = defaults.data(forKey: OllamaService.serverListKey).flatMap {
+            try? JSONDecoder().decode(OllamaServerListPayload.self, from: $0)
+        }
+        let selectedID = savedID.isEmpty ? payload?.defaultServerID : UUID(uuidString: savedID)
+        let server = payload?.servers.first { $0.id == selectedID }
+        return ReviewerSelection(providerName: provider, modelName: model,
+            ollamaServerID: savedID.isEmpty ? selectedID?.uuidString : savedID,
+            ollamaBaseURL: server?.baseURL)
     }
 
     static var usesAIReviewer: Bool { reviewerSelection != nil }

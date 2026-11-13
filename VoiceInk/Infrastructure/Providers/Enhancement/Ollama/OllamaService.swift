@@ -59,6 +59,7 @@ class OllamaService: ObservableObject {
     var baseURL: String {
         get { defaultServer?.baseURL ?? Self.defaultBaseURL }
         set {
+            reloadPersistedConfiguration()
             if var server = defaultServer {
                 server.baseURL = newValue
                 updateServer(server)
@@ -76,6 +77,7 @@ class OllamaService: ObservableObject {
             return defaultServer.lastKnownModelNames.first ?? "llama2"
         }
         set {
+            reloadPersistedConfiguration()
             guard var server = defaultServer else { return }
             server.preferredModel = newValue
             updateServer(server)
@@ -113,7 +115,13 @@ class OllamaService: ObservableObject {
 
     func modelNames(forServerID id: UUID?) -> [String] {
         guard let server = server(withID: id) else { return [] }
-        return fetchedModelsByServerID[server.id]?.map(\.name) ?? server.lastKnownModelNames
+        var names = fetchedModelsByServerID[server.id]?.map(\.name) ?? server.lastKnownModelNames
+        // A saved/manual model remains selectable even when tags are empty or
+        // omit it. Refreshing the list must not erase the user's selection.
+        if !server.preferredModel.isEmpty, !names.contains(server.preferredModel) {
+            names.append(server.preferredModel)
+        }
+        return names
     }
 
     func status(forServerID id: UUID) -> OllamaServerStatus {
@@ -132,6 +140,7 @@ class OllamaService: ObservableObject {
             preferredModel: preferredModel,
             lastKnownModelNames: preferredModel.isEmpty ? [] : [preferredModel]
         )
+        reloadPersistedConfiguration()
         servers.append(server)
         if defaultServerID == nil {
             defaultServerID = server.id
@@ -142,6 +151,7 @@ class OllamaService: ObservableObject {
     }
 
     func addServer(_ server: OllamaServerConfiguration) {
+        reloadPersistedConfiguration()
         guard !servers.contains(where: { $0.id == server.id }) else { return }
         servers.append(server)
         if defaultServerID == nil {
@@ -152,19 +162,38 @@ class OllamaService: ObservableObject {
     }
 
     func updateServer(_ server: OllamaServerConfiguration) {
+        let previous = servers.first { $0.id == server.id }
+        reloadPersistedConfiguration()
         guard let index = servers.firstIndex(where: { $0.id == server.id }) else { return }
-        servers[index] = server
+        // Merge only fields edited by this caller, not its stale cached snapshot.
+        if previous?.name != server.name { servers[index].name = server.name }
+        if previous?.baseURL != server.baseURL {
+            if servers[index].baseURL != server.baseURL {
+                serverStatuses[server.id] = nil
+                fetchedModelsByServerID[server.id] = nil
+            }
+            servers[index].baseURL = server.baseURL
+        }
+        if previous?.preferredModel != server.preferredModel {
+            servers[index].preferredModel = server.preferredModel
+        }
+        if previous?.lastKnownModelNames != server.lastKnownModelNames {
+            servers[index].lastKnownModelNames = server.lastKnownModelNames
+        }
         persistServers()
         if defaultServerID == server.id { syncLegacyKeys() }
     }
 
     func setPreferredModel(_ model: String, forServerID id: UUID) {
-        guard var server = server(withID: id) else { return }
-        server.preferredModel = model
-        updateServer(server)
+        reloadPersistedConfiguration()
+        guard let index = servers.firstIndex(where: { $0.id == id }) else { return }
+        servers[index].preferredModel = model
+        persistServers()
+        if defaultServerID == id { syncLegacyKeys() }
     }
 
     func removeServer(withID id: UUID) {
+        reloadPersistedConfiguration()
         servers.removeAll { $0.id == id }
         serverStatuses[id] = nil
         fetchedModelsByServerID[id] = nil
@@ -176,6 +205,7 @@ class OllamaService: ObservableObject {
     }
 
     func setDefaultServer(withID id: UUID) {
+        reloadPersistedConfiguration()
         guard servers.contains(where: { $0.id == id }) else { return }
         defaultServerID = id
         persistServers()
@@ -193,6 +223,24 @@ class OllamaService: ObservableObject {
         }
         persistServers()
         syncLegacyKeys()
+    }
+
+    private func reloadPersistedConfiguration() {
+        guard let data = userDefaults.data(forKey: Self.serverListKey),
+            let payload = try? JSONDecoder().decode(OllamaServerListPayload.self, from: data)
+        else { return }
+        let previousURLs = Dictionary(uniqueKeysWithValues: servers.map { ($0.id, $0.baseURL) })
+        servers = payload.servers
+        let unchangedIDs = Set(servers.compactMap { server in
+            previousURLs[server.id] == server.baseURL ? server.id : nil
+        })
+        defaultServerID = payload.defaultServerID.flatMap { id in
+            servers.contains(where: { $0.id == id }) ? id : nil
+        } ?? servers.first?.id
+        // Connection state and fetched tags belong to an endpoint, not just its ID.
+        // Keep the user's persisted preferred model and offline names untouched.
+        serverStatuses = serverStatuses.filter { id, _ in unchangedIDs.contains(id) }
+        fetchedModelsByServerID = fetchedModelsByServerID.filter { id, _ in unchangedIDs.contains(id) }
     }
 
     private func persistServers() {
@@ -244,6 +292,7 @@ class OllamaService: ObservableObject {
 
     @MainActor
     func refresh(serverID: UUID) async -> Result<[OllamaModel], Error> {
+        reloadPersistedConfiguration()
         guard let server = server(withID: serverID), let url = URL(string: server.baseURL) else {
             let error = LocalAIError.invalidURL
             serverStatuses[serverID] = OllamaServerStatus(
@@ -257,6 +306,10 @@ class OllamaService: ObservableObject {
 
         do {
             let models = try await transport.fetchModels(baseURL: url)
+            reloadPersistedConfiguration()
+            guard let currentServer = servers.first(where: { $0.id == serverID }),
+                currentServer.baseURL == server.baseURL
+            else { return .failure(LocalAIError.invalidURL) }
             fetchedModelsByServerID[serverID] = models
             if let index = servers.firstIndex(where: { $0.id == serverID }) {
                 servers[index].lastKnownModelNames = models.map(\.name)
@@ -270,6 +323,9 @@ class OllamaService: ObservableObject {
                 isConnected: true, isRefreshing: false, errorMessage: nil)
             return .success(models)
         } catch {
+            reloadPersistedConfiguration()
+            guard servers.contains(where: { $0.id == serverID && $0.baseURL == server.baseURL })
+            else { return .failure(error) }
             serverStatuses[serverID] = OllamaServerStatus(
                 isConnected: false, isRefreshing: false, errorMessage: error.localizedDescription)
             return .failure(error)

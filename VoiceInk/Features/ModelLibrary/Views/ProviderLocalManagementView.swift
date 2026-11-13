@@ -6,6 +6,7 @@ struct LocalEnhancementServiceManagementView: View {
 
     @State private var isOllamaExpanded = false
     @State private var isLocalCLIExpanded = false
+    @AppStorage("ollamaSettingsLastViewedServerID") private var lastViewedOllamaServerID = ""
     @State private var selectedOllamaServerID: UUID?
     @State private var ollamaServerName = ""
     @State private var ollamaBaseURL = OllamaService.defaultBaseURL
@@ -57,7 +58,11 @@ struct LocalEnhancementServiceManagementView: View {
             .background(AppMaterialCardBackground(cornerRadius: 11))
         }
         .onAppear {
-            selectedOllamaServerID = aiService.defaultOllamaServerID ?? ollamaServers.first?.id
+            selectedOllamaServerID = OllamaServerConfiguration.editorSelection(
+                savedID: UUID(uuidString: lastViewedOllamaServerID),
+                defaultID: aiService.defaultOllamaServerID,
+                servers: ollamaServers
+            )
             syncOllamaStateFromSelection()
             syncLocalCLIStateFromService()
         }
@@ -92,6 +97,21 @@ struct LocalEnhancementServiceManagementView: View {
 
     private var ollamaModelNames: [String] {
         aiService.availableOllamaModels(serverID: selectedOllamaServerID)
+    }
+
+    // Only user edits write the model. Loading another server's UI state must not
+    // trigger an onChange write against the newly selected server.
+    private var ollamaModelBinding: Binding<String> {
+        Binding(
+            get: { selectedOllamaModel },
+            set: { value in
+                selectedOllamaModel = value
+                guard let serverID = selectedOllamaServerID else { return }
+                let model = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !model.isEmpty else { return }
+                aiService.setPreferredOllamaModel(model, serverID: serverID)
+            }
+        )
     }
 
     private var ollamaStatusTitle: Text {
@@ -155,7 +175,8 @@ struct LocalEnhancementServiceManagementView: View {
                         .pickerStyle(.menu)
                         .labelsHidden()
                         .frame(maxWidth: 240, alignment: .leading)
-                        .onChange(of: selectedOllamaServerID) { _, _ in
+                        .onChange(of: selectedOllamaServerID) { _, newValue in
+                            lastViewedOllamaServerID = newValue?.uuidString ?? ""
                             syncOllamaStateFromSelection()
                         }
 
@@ -243,33 +264,19 @@ struct LocalEnhancementServiceManagementView: View {
                     .padding(.leading, LocalProviderMetrics.labelWidth + 12)
 
                 LocalProviderFormRow(title: "Model") {
-                    if ollamaModelNames.isEmpty {
-                        TextField("Model name", text: $selectedOllamaModel)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 320)
-                            .onSubmit {
-                                guard let selectedOllamaServerID, !selectedOllamaModel.isEmpty else { return }
-                                aiService.setPreferredOllamaModel(
-                                    selectedOllamaModel,
-                                    serverID: selectedOllamaServerID
-                                )
-                            }
-                    } else {
-                        Picker("Model", selection: $selectedOllamaModel) {
+                    TextField("Model name", text: ollamaModelBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 320)
+                    if !ollamaModelNames.isEmpty {
+                        Menu {
                             ForEach(ollamaModelNames, id: \.self) { model in
-                                Text(model).tag(model)
+                                Button(model) { ollamaModelBinding.wrappedValue = model }
                             }
+                        } label: {
+                            Image(systemName: "chevron.down")
                         }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                        .frame(maxWidth: 320, alignment: .leading)
-                        .onChange(of: selectedOllamaModel) { _, newValue in
-                            guard !isSyncingOllamaState,
-                                let selectedOllamaServerID,
-                                !newValue.isEmpty
-                            else { return }
-                            aiService.setPreferredOllamaModel(newValue, serverID: selectedOllamaServerID)
-                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
                     }
                 }
             }
@@ -366,13 +373,11 @@ struct LocalEnhancementServiceManagementView: View {
             let models = result.models.map(\.name)
             ollamaUserRefreshError = result.errorMessage
 
-            if !models.contains(selectedOllamaModel), let firstModel = models.first {
-                isSyncingOllamaState = true
-                selectedOllamaModel = firstModel
-                aiService.setPreferredOllamaModel(firstModel, serverID: serverID)
-                DispatchQueue.main.async {
-                    isSyncingOllamaState = false
-                }
+            if selectedOllamaModel.isEmpty {
+                // The service already merged the refresh into the latest saved
+                // configuration. Do not overwrite a model chosen elsewhere.
+                let savedModel = aiService.ollamaServerConfiguration(id: serverID)?.preferredModel ?? ""
+                selectedOllamaModel = savedModel.isEmpty ? models.first ?? "" : savedModel
             }
         }
     }
