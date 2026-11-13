@@ -10,7 +10,6 @@ struct LocalEnhancementServiceManagementView: View {
     @State private var selectedOllamaServerID: UUID?
     @State private var ollamaServerName = ""
     @State private var ollamaBaseURL = OllamaService.defaultBaseURL
-    @State private var selectedOllamaModel = ""
     @State private var ollamaUserRefreshError: String?
     @State private var isSyncingOllamaState = false
     @State private var ollamaServerBeingRefreshed: UUID?
@@ -99,19 +98,10 @@ struct LocalEnhancementServiceManagementView: View {
         aiService.availableOllamaModels(serverID: selectedOllamaServerID)
     }
 
-    // Only user edits write the model. Loading another server's UI state must not
-    // trigger an onChange write against the newly selected server.
+    // Read the saved value directly. A second @State copy can show a stale/empty
+    // model after a server refresh or when this settings view is recreated.
     private var ollamaModelBinding: Binding<String> {
-        Binding(
-            get: { selectedOllamaModel },
-            set: { value in
-                selectedOllamaModel = value
-                guard let serverID = selectedOllamaServerID else { return }
-                let model = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !model.isEmpty else { return }
-                aiService.setPreferredOllamaModel(model, serverID: serverID)
-            }
-        )
+        OllamaModelComboBox.savedModelBinding(aiService: aiService, serverID: selectedOllamaServerID)
     }
 
     private var ollamaStatusTitle: Text {
@@ -264,20 +254,8 @@ struct LocalEnhancementServiceManagementView: View {
                     .padding(.leading, LocalProviderMetrics.labelWidth + 12)
 
                 LocalProviderFormRow(title: "Model") {
-                    TextField("Model name", text: ollamaModelBinding)
-                        .textFieldStyle(.roundedBorder)
+                    OllamaModelComboBox(model: ollamaModelBinding, modelNames: ollamaModelNames)
                         .frame(maxWidth: 320)
-                    if !ollamaModelNames.isEmpty {
-                        Menu {
-                            ForEach(ollamaModelNames, id: \.self) { model in
-                                Button(model) { ollamaModelBinding.wrappedValue = model }
-                            }
-                        } label: {
-                            Image(systemName: "chevron.down")
-                        }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                    }
                 }
             }
         }
@@ -370,15 +348,9 @@ struct LocalEnhancementServiceManagementView: View {
             let result = await aiService.refreshOllamaServer(id: serverID)
             guard selectedOllamaServerID == serverID else { return }
 
-            let models = result.models.map(\.name)
             ollamaUserRefreshError = result.errorMessage
 
-            if selectedOllamaModel.isEmpty {
-                // The service already merged the refresh into the latest saved
-                // configuration. Do not overwrite a model chosen elsewhere.
-                let savedModel = aiService.ollamaServerConfiguration(id: serverID)?.preferredModel ?? ""
-                selectedOllamaModel = savedModel.isEmpty ? models.first ?? "" : savedModel
-            }
+
         }
     }
 
@@ -408,7 +380,6 @@ struct LocalEnhancementServiceManagementView: View {
             isSyncingOllamaState = true
             ollamaServerName = ""
             ollamaBaseURL = OllamaService.defaultBaseURL
-            selectedOllamaModel = ""
             DispatchQueue.main.async {
                 isSyncingOllamaState = false
             }
@@ -421,8 +392,6 @@ struct LocalEnhancementServiceManagementView: View {
         }
         ollamaServerName = server.name
         ollamaBaseURL = server.baseURL
-        selectedOllamaModel =
-            server.preferredModel.isEmpty ? ollamaModelNames.first ?? "" : server.preferredModel
         ollamaUserRefreshError = aiService.ollamaServerStatus(id: server.id).errorMessage
         DispatchQueue.main.async {
             isSyncingOllamaState = false
@@ -578,5 +547,76 @@ private struct LocalProviderFormRow<Content: View>: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+
+/// One native editable dropdown, with one arrow and one persistence path for
+/// menu selection and typed model names. Updating the control never writes back.
+struct OllamaModelComboBox: NSViewRepresentable {
+    @Binding var model: String
+    let modelNames: [String]
+
+    static func savedModelBinding(aiService: AIService, serverID: UUID?) -> Binding<String> {
+        Binding(
+            get: { aiService.ollamaServerConfiguration(id: serverID)?.preferredModel ?? "" },
+            set: { value in
+                guard let serverID else { return }
+                aiService.setPreferredOllamaModel(
+                    value.trimmingCharacters(in: .whitespacesAndNewlines), serverID: serverID)
+            }
+        )
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(model: $model) }
+
+    func makeNSView(context: Context) -> NSComboBox {
+        Self.makeControl(coordinator: context.coordinator)
+    }
+
+    static func makeControl(coordinator: Coordinator) -> NSComboBox {
+        let control = NSComboBox()
+        control.isEditable = true
+        control.completes = false
+        control.placeholderString = String(localized: "Model name")
+        control.setAccessibilityLabel(String(localized: "Model"))
+        control.setAccessibilityIdentifier("ollamaModelComboBox")
+        control.delegate = coordinator
+        return control
+    }
+
+    func updateNSView(_ control: NSComboBox, context: Context) {
+        context.coordinator.model = $model
+        Self.updateControl(control, model: model, modelNames: modelNames,
+                           coordinator: context.coordinator)
+    }
+
+    static func updateControl(_ control: NSComboBox, model: String, modelNames: [String],
+                              coordinator: Coordinator) {
+        coordinator.isUpdating = true
+        defer { coordinator.isUpdating = false }
+        if control.objectValues.compactMap({ $0 as? String }) != modelNames {
+            control.removeAllItems()
+            control.addItems(withObjectValues: modelNames)
+        }
+        if control.stringValue != model { control.stringValue = model }
+    }
+
+    final class Coordinator: NSObject, NSComboBoxDelegate {
+        var model: Binding<String>
+        var isUpdating = false
+
+        init(model: Binding<String>) { self.model = model }
+
+        func comboBoxSelectionDidChange(_ notification: Notification) {
+            guard !isUpdating, let control = notification.object as? NSComboBox,
+                  let selected = control.objectValueOfSelectedItem as? String else { return }
+            model.wrappedValue = selected
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard !isUpdating, let control = notification.object as? NSComboBox else { return }
+            model.wrappedValue = control.stringValue
+        }
     }
 }

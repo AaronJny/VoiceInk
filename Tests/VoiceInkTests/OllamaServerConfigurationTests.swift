@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import Foundation
 import LLMkit
 import SwiftData
@@ -85,6 +87,62 @@ private final class OllamaTransportSpy: OllamaTransport, @unchecked Sendable {
 
 @Suite(.serialized)
 struct OllamaServerConfigurationTests {
+    @MainActor
+    @Test func nativeModelDropdownSelectionPersistsAcrossReopeningAndServerSwitch() throws {
+        let defaults = makeDefaults()
+        let service = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        let ai = AIService(userDefaults: defaults, ollamaService: service)
+        let local = try #require(ai.ollamaServers.first)
+        let remote = ai.addOllamaServer(name: "Remote", baseURL: "http://remote:11434")
+        let binding = OllamaModelComboBox.savedModelBinding(aiService: ai, serverID: remote.id)
+        let coordinator = OllamaModelComboBox.Coordinator(model: binding)
+        let control = OllamaModelComboBox.makeControl(coordinator: coordinator)
+        OllamaModelComboBox.updateControl(control, model: binding.wrappedValue,
+            modelNames: ["qwen3.5:9b", "ornith-1.5:9b"], coordinator: coordinator)
+        control.selectItem(at: 1)
+        // Exercise the actual native control delegate, not the service setter.
+        coordinator.comboBoxSelectionDidChange(Notification(name: NSComboBox.selectionDidChangeNotification,
+                                                           object: control))
+        #expect(binding.wrappedValue == "ornith-1.5:9b")
+        #expect(ai.ollamaServerConfiguration(id: local.id)?.preferredModel == local.preferredModel)
+        coordinator.model = OllamaModelComboBox.savedModelBinding(aiService: ai, serverID: local.id)
+        OllamaModelComboBox.updateControl(control, model: local.preferredModel,
+            modelNames: [], coordinator: coordinator)
+        #expect(ai.ollamaServerConfiguration(id: remote.id)?.preferredModel == "ornith-1.5:9b")
+        let reopened = AIService(userDefaults: defaults,
+            ollamaService: OllamaService(userDefaults: defaults, transport: OllamaTransportSpy()))
+        let reopenedBinding = OllamaModelComboBox.savedModelBinding(aiService: reopened, serverID: remote.id)
+        let reopenedCoordinator = OllamaModelComboBox.Coordinator(model: reopenedBinding)
+        let reopenedControl = OllamaModelComboBox.makeControl(coordinator: reopenedCoordinator)
+        OllamaModelComboBox.updateControl(reopenedControl, model: reopenedBinding.wrappedValue,
+            modelNames: reopened.availableOllamaModels(serverID: remote.id), coordinator: reopenedCoordinator)
+        #expect(reopenedControl.stringValue == "ornith-1.5:9b")
+        #expect(reopened.defaultOllamaServerID == local.id)
+    }
+
+    @MainActor
+    @Test func nativeModelDropdownTypingAndProgrammaticRefreshDoNotLoseSelection() async throws {
+        let defaults = makeDefaults()
+        let service = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        let ai = AIService(userDefaults: defaults, ollamaService: service)
+        let remote = ai.addOllamaServer(name: "Remote", baseURL: "http://remote:11434")
+        let binding = OllamaModelComboBox.savedModelBinding(aiService: ai, serverID: remote.id)
+        let coordinator = OllamaModelComboBox.Coordinator(model: binding)
+        let control = OllamaModelComboBox.makeControl(coordinator: coordinator)
+        control.stringValue = "custom-model:latest"
+        coordinator.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: control))
+        _ = await ai.refreshOllamaServer(id: remote.id)
+        OllamaModelComboBox.updateControl(control, model: binding.wrappedValue,
+            modelNames: ai.availableOllamaModels(serverID: remote.id), coordinator: coordinator)
+        #expect(control.stringValue == "custom-model:latest")
+        let restored = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
+        #expect(restored.server(withID: remote.id)?.preferredModel == "custom-model:latest")
+        // Clearing is a real user edit, unlike loading an empty control for a different server.
+        control.stringValue = ""
+        coordinator.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: control))
+        #expect(binding.wrappedValue.isEmpty)
+    }
+
     @MainActor
     @Test func refreshCannotApplyTagsFromPreviousEndpoint() async throws {
         let defaults = makeDefaults()

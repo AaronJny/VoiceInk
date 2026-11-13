@@ -27,7 +27,7 @@ assert t['totalTestCount']>0 and t['failedTests']==0 and t['skippedTests']==0
 assert Path('SHA256SUMS.txt').read_text()==m['sha256']+'  '+p.name+'\n'
 Path('release-notes.md').write_text(f'''## VoiceInk 2.27 定制版（Apple Silicon / ARM64）
 
-保留原有个性化功能。本次修复 Auto Learn 把发送后的编辑框占位文字误当作手动更正的问题，保留发送清空前实际观察到的手动修改，并改进中文纠正候选提取。保留 personal.2 的远程 Ollama 设置与独立审核服务器、模型选择。
+保留原有个性化功能。本次将 Ollama 模型选择改为单个原生可编辑下拉框，去除重复箭头，选择和输入直接保存到对应服务器，重新打开从保存值读取。保留 personal.3 的自动学习修复及原有定制。
 
 ### 安装
 下载 **VoiceInk-2.27-arm64.dmg**，退出旧版后打开 DMG，将 VoiceInk 拖入 Applications。升级前请备份原应用和数据。
@@ -39,7 +39,7 @@ Path('release-notes.md').write_text(f'''## VoiceInk 2.27 定制版（Apple Silic
 - 源码：`{m['sourceCommit']}`；构建运行：`{m['sourceRun']}`。
 - 未经 Apple 公证；真实 Mac 上的录音与本机/远端服务交互仍需实际使用确认。
 
-不扩大输入观察范围，不增加键盘监听权限。发送清空时保留已观察到的真实修改；若目标应用未提供变更通知，或修改与发送合并而未能读取中间内容，仍可能漏检。真实目标应用的可访问性行为仍需实际使用确认。
+模型选择回归覆盖原生控件选择、手动输入、刷新、切换服务器与重新创建设置实例；不等同于用户 Mac 上的完整界面实测。
 
 附 SHA256SUMS.txt 与 dmg-info.json。
 ''')
