@@ -1,0 +1,35 @@
+name: Package verified VoiceInk DMG
+on:
+  push:
+    branches: ['ci/package-dmg']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  dmg:
+    if: github.repository == 'AaronJny/VoiceInk' && github.ref == 'refs/heads/ci/package-dmg'
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Download latest verified signed app
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: '13962641958'
+          merge-multiple: true
+          path: signed-input
+          run-id: 43255460579
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create DMG and verify mounted app
+        run: python3 scripts/ci/package-dmg.py
+      - name: Upload installable DMG
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VoiceInk-2.27-arm64-DMG
+          path: dmg-output/*
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
