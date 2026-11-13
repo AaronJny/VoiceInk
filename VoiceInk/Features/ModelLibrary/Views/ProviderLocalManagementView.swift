@@ -599,6 +599,11 @@ struct OllamaModelComboBox: NSViewRepresentable {
             control.removeAllItems()
             control.addItems(withObjectValues: modelNames)
         }
+        if let selectedIndex = modelNames.firstIndex(of: model) {
+            if control.indexOfSelectedItem != selectedIndex { control.selectItem(at: selectedIndex) }
+        } else if control.indexOfSelectedItem >= 0 {
+            control.deselectItem(at: control.indexOfSelectedItem)
+        }
         if control.stringValue != model { control.stringValue = model }
     }
 

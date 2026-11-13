@@ -105,9 +105,13 @@ struct OllamaServerConfigurationTests {
                                                            object: control))
         #expect(binding.wrappedValue == "ornith-1.5:9b")
         #expect(ai.ollamaServerConfiguration(id: local.id)?.preferredModel == local.preferredModel)
+        ai.setPreferredOllamaModel("qwen3.5:9b", serverID: local.id)
         coordinator.model = OllamaModelComboBox.savedModelBinding(aiService: ai, serverID: local.id)
-        OllamaModelComboBox.updateControl(control, model: local.preferredModel,
-            modelNames: [], coordinator: coordinator)
+        // Same list, different server: selected index must follow the persisted value too.
+        OllamaModelComboBox.updateControl(control, model: "qwen3.5:9b",
+            modelNames: ["qwen3.5:9b", "ornith-1.5:9b"], coordinator: coordinator)
+        #expect(control.indexOfSelectedItem == 0)
+        #expect(control.stringValue == "qwen3.5:9b")
         #expect(ai.ollamaServerConfiguration(id: remote.id)?.preferredModel == "ornith-1.5:9b")
         let reopened = AIService(userDefaults: defaults,
             ollamaService: OllamaService(userDefaults: defaults, transport: OllamaTransportSpy()))
@@ -135,6 +139,7 @@ struct OllamaServerConfigurationTests {
         OllamaModelComboBox.updateControl(control, model: binding.wrappedValue,
             modelNames: ai.availableOllamaModels(serverID: remote.id), coordinator: coordinator)
         #expect(control.stringValue == "custom-model:latest")
+        #expect(control.objectValueOfSelectedItem as? String == "custom-model:latest")
         let restored = OllamaService(userDefaults: defaults, transport: OllamaTransportSpy())
         #expect(restored.server(withID: remote.id)?.preferredModel == "custom-model:latest")
         // Clearing is a real user edit, unlike loading an empty control for a different server.
