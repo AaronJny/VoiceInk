@@ -25,10 +25,19 @@
 
 ## 构建缓存与耗时
 
-仅缓存 `.ci-build/SourcePackages`、`Build/Intermediates.noindex`、`Build/Products` 和 `ModuleCache.noindex`。编译缓存仅在编译成功后、测试注入前保存（v2 key）；暂存前强制检查无 XCTest。缓存中的 app 仅为编译阶段 ad-hoc 产物，签名在另一 job 的临时目录进行，不会写回缓存。不缓存测试结果、原证书签名产物、签名钥匙串、P12、私钥、临时信任或用户数据。恢复缓存后仍执行编译和全部七组测试，不能以缓存成功替代测试通过。
+仅缓存 `.ci-build/SourcePackages`、`Build/Intermediates.noindex`、`Build/Products` 和 `ModuleCache.noindex`。编译缓存仅在编译成功后、测试注入前保存（v2 key）；暂存前强制检查无 XCTest。缓存中的 app 仅为编译阶段 ad-hoc 产物，签名在另一 job 的临时目录进行，不会写回缓存。不缓存测试结果、原证书签名产物、签名钥匙串、P12、私钥、临时信任或用户数据。恢复缓存后仍执行编译和全部八组测试，不能以缓存成功替代测试通过。
 
 SPM key 按实际 runner 架构、Xcode/Swift/SDK 和 Package.resolved 隔离；编译 key 另含配置、xcconfig、项目、entitlements、构建脚本及含 Whisper 摘要的准备脚本。保存 key 追加源码 commit，只在相同依赖/工具链前缀恢复；Xcode仍自行判定源码增量，所有构建继续锁定依赖。PR只恢复、不保存，只有受信本仓 push 可以保存。
 
-工作流单独显示生产 app 编译与七组测试。`cache-status.json` 记录精确/前缀命中，`stage-timings.json` 和 job summary 记录实际阶段耗时。warm-restored 只代表缓存已恢复，不承诺全部目标免编译；冷/热收益必须比较实际运行。官方 cache v4.2.3 commit 已核验： https://api.github.com/repos/actions/cache/git/ref/tags/v4.2.3
+工作流单独显示生产 app 编译与八组测试。`cache-status.json` 记录精确/前缀命中，`stage-timings.json` 和 job summary 记录实际阶段耗时。warm-restored 只代表缓存已恢复，不承诺全部目标免编译；冷/热收益必须比较实际运行。官方 cache v4.2.3 commit 已核验： https://api.github.com/repos/actions/cache/git/ref/tags/v4.2.3
 
 实测冷构建（2026-11-12，c6e012）：3 CPU / 7 GiB，Release 编译 908 秒，49 项测试 49 秒；两层缓存均成功保存。未单独追加热构建测量。
+
+
+## DMG 与发布（personal.2 起）
+
+正式构建现在自动执行 build → sign → dmg。DMG job 只读取同一运行的已签名包，不接触私钥；校验源码、测试摘要哈希、证书、只读挂载与应用完整清单，产出 `VoiceInk-DMG-<commit>`。
+
+发布是明确的独立操作，不是每次 main 推送自动发布。为已在 main 上完成成功构建的提交创建 `release/v2.27-personal.N` 分支，或在 main 手动运行 Release verified VoiceInk DMG 并填入新 tag。发布脚本只接受同一源码的成功正式构建，不会使用另一个“最新成功”的提交，且不覆盖已存在的 Release。下载公开于仓库权限范围内的发布资产后再次核对 SHA256 和 tag。
+
+2026-11-13 用户批准合并有用工作到 main 并删除过程分支。此次合并保留以下过程头为祖先：`ac3cd5623f1bc71e1f334bf47d03d5e0131f4faf`（签名探针及旧基线）、`98f828cfc0f26e7bab7ca74e448fccbf2fe975ba`（上游导入）、`9055c81a15a9019959ea4fdb86c78e0973569cc8`（旧包重签）、`4138bf73075566234e1992eae9c1f851324f0f91`（首次 DMG 与发布）。仅保留有用的正式流程在当前源码；实验脚本仍可从提交历史恢复。`cleanup-process-branches.py` 仅删除本次审计列明、头未改变且已在 main 历史中的分支，不清理其他新分支。

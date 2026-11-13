@@ -1,0 +1,38 @@
+name: Release verified VoiceInk DMG
+on:
+  push:
+    branches: ['release/v*-personal.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: New release tag (for example v2.27-personal.2)
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.repository == 'AaronJny/VoiceInk' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Publish exact-source verified DMG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: AaronJny/VoiceInk
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: bash scripts/ci/release-dmg.sh
+      - name: Remove audited process branches after verified release
+        if: github.ref == 'refs/heads/release/v2.27-personal.2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: AaronJny/VoiceInk
+        run: python3 scripts/ci/cleanup-process-branches.py

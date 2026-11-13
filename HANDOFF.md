@@ -1,6 +1,8 @@
 # VoiceInk 定制版交接文档
 
-> 后续实施状态：上游 v2.27 已合并到 `upgrade/v2.27-cloud`，49 项测试及完整原证书云签名已通过；安装包、构建记录与尚待实机验收项见 [升级实施记录](planning/upgrade-v2.27.md)。下文保留原始交接基线。
+> 最新维护：远程 Ollama 设置与 Auto Learn 服务选择修复、正式 DMG/Release 流程及过程分支清理方案见 [personal.2 维护交接](planning/maintenance-personal-2.md)。最终产物与测试结果以对应 Release 和 Actions 为准。
+
+> 早期升级实施状态：上游 v2.27 已合并到 `upgrade/v2.27-cloud`，49 项测试及完整原证书云签名已通过；安装包、构建记录与尚待实机验收项见 [升级实施记录](planning/upgrade-v2.27.md)。下文保留原始交接基线。
 
 更新时间：2026-11-12。面向接手本项目的 Codex 和维护者。
 

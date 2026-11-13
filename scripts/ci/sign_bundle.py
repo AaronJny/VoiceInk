@@ -91,6 +91,7 @@ metadata = {
     'certificateSHA1': IDENTITY, 'designatedRequirement': requirement.strip(),
     'entitlements': entitlements, 'signedCode': rows,
     'archiveSHA256': hashlib.sha256(archive.read_bytes()).hexdigest(),
+    'testSummarySHA256': hashlib.sha256((ARTIFACTS / 'test-summary.json').read_bytes()).hexdigest(),
     'toolchain': (ARTIFACTS / 'toolchain.txt').read_text(),
     'verification': 'codesign --verify --deep --strict, each code leaf fingerprint, zip round-trip',
     'notarized': False, 'realDeviceValidation': 'pending',

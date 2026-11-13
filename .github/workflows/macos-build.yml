@@ -126,6 +126,8 @@ jobs:
           retention-days: 7
 
   sign:
+    outputs:
+      signed-artifact-id: ${{ steps.signed-artifact.outputs.artifact-id }}
     needs: build
     if: >-
       github.repository == 'AaronJny/VoiceInk' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/upgrade/') || github.ref == 'refs/heads/ci/cloud-baseline')
@@ -155,6 +157,7 @@ jobs:
           SIGNING_IDENTITY_SHA1: ${{ vars.SIGNING_IDENTITY_SHA1 }}
         run: bash scripts/ci/sign.sh
       - name: Upload signed application
+        id: signed-artifact
         if: success() && steps.signing.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -163,6 +166,7 @@ jobs:
           path: |
             artifacts/VoiceInk-*.zip
             artifacts/build-info.json
+            artifacts/test-summary.json
             artifacts/toolchain.txt
           if-no-files-found: error
           retention-days: 14
@@ -180,3 +184,30 @@ jobs:
             artifacts/*.log
           if-no-files-found: ignore
           retention-days: 7
+
+  dmg:
+    needs: sign
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Download same-run signed application
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: VoiceInk-arm64-${{ github.sha }}
+          path: signed-input
+      - name: Build and mount-verify installable DMG
+        env:
+          SOURCE_ARTIFACT_ID: ${{ needs.sign.outputs.signed-artifact-id }}
+        run: python3 scripts/ci/package-dmg.py
+      - name: Upload verified DMG
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VoiceInk-DMG-${{ github.sha }}
+          path: dmg-output/*
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
