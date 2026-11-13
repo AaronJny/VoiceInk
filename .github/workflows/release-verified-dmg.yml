@@ -1,0 +1,29 @@
+name: Release verified VoiceInk DMG
+on:
+  push:
+    branches: ['ci/release-v2.27']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  release:
+    if: github.repository == 'AaronJny/VoiceInk' && github.ref == 'refs/heads/ci/release-v2.27'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Download verified DMG
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: '14005938603'
+          merge-multiple: true
+          path: release-assets
+          run-id: 43356411043
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish original verified DMG and verify downloaded release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: AaronJny/VoiceInk
+        run: bash scripts/ci/release-dmg.sh
