@@ -1,0 +1,19 @@
+name: Diagnose signing runner
+on:
+  push:
+    branches: ['ci/diagnose-runner-personal2']
+permissions:
+  contents: read
+  checks: read
+  actions: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Read failed job annotations
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api repos/AaronJny/VoiceInk/check-runs/131706435037 --jq '{status,conclusion,output}'
+          gh api repos/AaronJny/VoiceInk/check-runs/131706435037/annotations
