@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 import OSLog
 
 enum AutoLearnLocalReviewPolicy {
@@ -40,7 +41,8 @@ enum AutoLearnLocalReviewPolicy {
         let terms = [original, target].compactMap { $0 }
         return terms.allSatisfy { term in
             !term.isEmpty && term.count <= AutoLearnLimits.maximumCandidateCharacters
-                && term.split(whereSeparator: \.isWhitespace).count <= maximumWords
+                && words(term).count <= maximumWords
+                && AutoLearnChineseTokenization.isSafeTerm(term)
                 && term.contains(where: \.isLetter)
                 && !term.unicodeScalars.contains {
                     CharacterSet.controlCharacters.contains($0) || CharacterSet.newlines.contains($0)
@@ -142,8 +144,12 @@ enum AutoLearnLocalReviewPolicy {
     }
 
     private static func words(_ text: String) -> [String] {
-        normalized(text).lowercased().replacingOccurrences(of: "’", with: "'")
-            .split(whereSeparator: \.isWhitespace).map(String.init)
+        let value = normalized(text).lowercased().replacingOccurrences(of: "’", with: "'")
+        guard AutoLearnChineseTokenization.containsHan(value) else {
+            return value.split(whereSeparator: \.isWhitespace).map(String.init)
+        }
+        return AutoLearnChineseTokenization.wordRanges(in: value, range: value.startIndex..<value.endIndex)
+            .map { String(value[$0]) }
     }
 
     private static func normalized(_ text: String) -> String {
@@ -172,5 +178,48 @@ struct AutoLearnLocalReviewer: Sendable {
                 incorrectTextToReplace: pair.source, correctedVocabularyTerm: pair.destination))
         }
         return AutoLearnSuggestionLimiter.limit(decisions, candidates: candidates)
+    }
+}
+
+// Shared by diff extraction and review so a Chinese sentence is never counted as one
+// whitespace-delimited word. This is lexical segmentation, not character-level diffing.
+enum AutoLearnChineseTokenization {
+    static func containsHan(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF, 0x20000...0x323AF: return true
+            default: return false
+            }
+        }
+    }
+
+    static func wordRanges(in text: String, range: Range<String.Index>) -> [Range<String.Index>] {
+        let tokenizer = NLTokenizer(unit: .word)
+        tokenizer.string = text
+        tokenizer.setLanguage(.simplifiedChinese)
+        var ranges: [Range<String.Index>] = []
+        tokenizer.enumerateTokens(in: range) { tokenRange, _ in
+            // Fail closed on unexpected partial/overlapping ranges rather than
+            // clipping a lexical word into a potentially unsafe replacement token.
+            guard tokenRange.lowerBound >= range.lowerBound,
+                tokenRange.upperBound <= range.upperBound,
+                tokenRange.lowerBound < tokenRange.upperBound,
+                ranges.last.map({ $0.upperBound <= tokenRange.lowerBound }) ?? true
+            else { return true }
+            ranges.append(tokenRange)
+            return true
+        }
+        return ranges
+    }
+
+    static func isSafeTerm(_ text: String) -> Bool {
+        guard containsHan(text) else { return true }
+        // A singleton Han substitution is unsafe as a reusable dictionary rule.
+        // Ambiguous segmentation is skipped rather than expanded into arbitrary context.
+        guard text.count >= 2,
+            text.count <= AutoLearnLimits.maximumUnspacedCandidateCharacters,
+            !text.unicodeScalars.contains(where: CharacterSet.punctuationCharacters.contains)
+        else { return false }
+        return !wordRanges(in: text, range: text.startIndex..<text.endIndex).isEmpty
     }
 }

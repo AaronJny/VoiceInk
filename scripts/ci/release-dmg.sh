@@ -27,19 +27,19 @@ assert t['totalTestCount']>0 and t['failedTests']==0 and t['skippedTests']==0
 assert Path('SHA256SUMS.txt').read_text()==m['sha256']+'  '+p.name+'\n'
 Path('release-notes.md').write_text(f'''## VoiceInk 2.27 定制版（Apple Silicon / ARM64）
 
-保留原有个性化功能。本次修复远程 Ollama 设置保存、模型列表空白，以及 Auto Learn 无法选择已配置远端服务的问题。Auto Learn 现在可独立指定服务器和审核模型，不改变已有 Mode 的服务器和模型。
+保留原有个性化功能。本次修复 Auto Learn 把发送后的编辑框占位文字误当作手动更正的问题，保留发送清空前实际观察到的手动修改，并改进中文纠正候选提取。保留 personal.2 的远程 Ollama 设置与独立审核服务器、模型选择。
 
 ### 安装
 下载 **VoiceInk-2.27-arm64.dmg**，退出旧版后打开 DMG，将 VoiceInk 拖入 Applications。升级前请备份原应用和数据。
 
 ### 验证
-- 8 组、{t['totalTestCount']} 项回归测试通过，无失败或跳过。
+- 10 组、{t['totalTestCount']} 项回归测试通过，无失败或跳过。
 - 原 VoiceInk Local Dev 证书签名；20 个代码路径、完整应用及挂载后签名复验通过。
 - DMG 通过 hdiutil 验证和只读挂载，文件哈希、权限、符号链接与原签名包一致。
 - 源码：`{m['sourceCommit']}`；构建运行：`{m['sourceRun']}`。
 - 未经 Apple 公证；真实 Mac 上的录音与本机/远端服务交互仍需实际使用确认。
 
-这次没有改变 Auto Learn 的观察时机与中文候选切分规则，不宣称修复了所有误触发/漏检现象。
+不扩大输入观察范围，不增加键盘监听权限。发送清空时保留已观察到的真实修改；若目标应用未提供变更通知，或修改与发送合并而未能读取中间内容，仍可能漏检。真实目标应用的可访问性行为仍需实际使用确认。
 
 附 SHA256SUMS.txt 与 dmg-info.json。
 ''')

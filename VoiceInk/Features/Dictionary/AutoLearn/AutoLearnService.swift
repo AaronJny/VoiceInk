@@ -350,6 +350,11 @@ actor AutoLearnService {
         }
     }
 
+    private func observedFieldValueChanged(token: AutoLearnPasteToken) async {
+        guard isEnabled, activeToken == token else { return }
+        await accessibilityRuntime.observeValueChange(token: token)
+    }
+
     private func beginObservation(
         text: String,
         processID: pid_t,
@@ -376,9 +381,16 @@ actor AutoLearnService {
         }
 
         activeToken = token
-        focusObserver.start(processID: processID, token: token) { token in
-            Task {
-                await AutoLearnService.shared.focusMayHaveChanged(token: token)
+        if let target = await accessibilityRuntime.observationTarget(token: token) {
+            guard activeToken == token, lifecycleGeneration == generation else { return }
+            focusObserver.start(processID: processID, token: token, target: target) { token, valueChanged in
+                Task {
+                    if valueChanged {
+                        await AutoLearnService.shared.observedFieldValueChanged(token: token)
+                    } else {
+                        await AutoLearnService.shared.focusMayHaveChanged(token: token)
+                    }
+                }
             }
         }
         scheduleDeadline(

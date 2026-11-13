@@ -7,9 +7,11 @@ final class AutoLearnAXRuntime: @unchecked Sendable {
         let token: AutoLearnPasteToken
         let appElement: AXUIElement
         let targetElement: AXUIElement
+        let identity: AutoLearnFieldIdentity
         let baselineFieldText: String
         let pastedRange: NSRange
         let pastedText: String
+        var observedEdit: AutoLearnObservedEdit
     }
 
     private let queue = DispatchQueue(label: "com.prakashjoshipax.voiceink.auto-learn.accessibility")
@@ -66,13 +68,16 @@ final class AutoLearnAXRuntime: @unchecked Sendable {
                 AutoLearnLimits.accessibilityTimeoutSeconds
             )
             let token = AutoLearnPasteToken(id: UUID())
+            let identity = textReader.autoLearnIdentity(from: reading.targetElement)
             session = Session(
                 token: token,
                 appElement: reading.appElement,
                 targetElement: reading.targetElement,
+                identity: identity,
                 baselineFieldText: fieldText,
                 pastedRange: pastedRange,
-                pastedText: observedPastedText
+                pastedText: observedPastedText,
+                observedEdit: AutoLearnObservedEdit(baseline: fieldText, capturedIdentity: identity)
             )
             return token
         }
@@ -80,12 +85,15 @@ final class AutoLearnAXRuntime: @unchecked Sendable {
 
     func finishSnapshot(token: AutoLearnPasteToken) async -> AutoLearnFieldSnapshot? {
         await perform { [self] in
-            guard let active = session, active.token == token else { return nil }
+            guard var active = session, active.token == token else { return nil }
             session = nil
 
             defer { textReader.restoreWebAccessibility(processID: AXProcessID(active.appElement), appElement: active.appElement) }
             guard let finalTextValue = textReader.textValue(from: active.targetElement) else { return nil }
-            let finalFieldText = finalTextValue.text
+            let identity = textReader.autoLearnIdentity(from: active.targetElement)
+            active.observedEdit.observe(finalTextValue.text, identity: identity)
+            guard !active.observedEdit.invalidated,
+                let finalFieldText = active.observedEdit.lastEditedText else { return nil }
             guard finalFieldText.utf16.count <= AccessibilityTextReader.maximumFieldUTF16Length else { return nil }
             guard !textIsExactlyEqual(finalFieldText, active.baselineFieldText) else { return nil }
 
@@ -95,6 +103,29 @@ final class AutoLearnAXRuntime: @unchecked Sendable {
                 pastedRange: active.pastedRange,
                 originalPastedText: active.pastedText
             )
+        }
+    }
+
+    func observationTarget(token: AutoLearnPasteToken) async -> AutoLearnObservationTarget? {
+        await perform { [self] in
+            guard let active = session, active.token == token else { return nil }
+            return AutoLearnObservationTarget(element: active.targetElement)
+        }
+    }
+
+    func observeValueChange(token: AutoLearnPasteToken) async {
+        await perform { [self] in
+            guard var active = session, active.token == token else { return }
+            let identity = textReader.autoLearnIdentity(from: active.targetElement)
+            if !identity.matchesEditor(active.identity) {
+                active.observedEdit.observe("", identity: identity)
+                session = active
+                return
+            }
+            guard let value = textReader.textValue(from: active.targetElement),
+                value.text.utf16.count <= AccessibilityTextReader.maximumFieldUTF16Length else { return }
+            active.observedEdit.observe(value.text, identity: identity)
+            session = active
         }
     }
 

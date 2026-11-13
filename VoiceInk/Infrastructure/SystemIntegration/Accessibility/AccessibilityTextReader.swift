@@ -106,6 +106,17 @@ final class AccessibilityTextReader {
         return AccessibilityFocusReader.editableState(of: element) == true
     }
 
+    func autoLearnIdentity(from element: AXUIElement) -> AutoLearnFieldIdentity {
+        AutoLearnFieldIdentity(
+            role: copyString(kAXRoleAttribute as CFString, from: element),
+            subrole: copyString(kAXSubroleAttribute as CFString, from: element),
+            identifier: copyString("AXIdentifier" as CFString, from: element),
+            isEditable: isEditable(element),
+            placeholder: copyString("AXPlaceholderValue" as CFString, from: element),
+            characterCount: copyInteger(kAXNumberOfCharactersAttribute as CFString, from: element)
+        )
+    }
+
     func textValue(from element: AXUIElement) -> AccessibilityTextValue? {
         let attributes = attributeNames(of: element)
         let parameterizedAttributes = parameterizedAttributeNames(of: element)

@@ -37,13 +37,13 @@ enum CorrectionDiffEngine {
     }
 
     private static let trailingSentencePunctuation: Set<Character> = [
-        ".", ",", "!", "?", ";", ":", "…",
+        ".", ",", "!", "?", ";", ":", "…", "，", "。", "！", "？", "；", "：", "、",
     ]
     private static let leadingWrappers: Set<Character> = [
-        "\"", "“", "‘", "(", "[", "{",
+        "\"", "“", "‘", "(", "[", "{", "（", "「", "『", "【",
     ]
     private static let structuralSeparators: Set<Character> = [
-        ",", "!", "?", ";", ":", "…", "(", ")", "[", "]", "{", "}", "\"", "“", "”",
+        ",", "!", "?", ";", ":", "…", "，", "。", "！", "？", "；", "：", "、", "（", "）", "「", "」", "『", "』", "【", "】", "(", ")", "[", "]", "{", "}", "\"", "“", "”",
     ]
 
     static func candidates(from revision: AutoLearnRevision,
@@ -194,7 +194,29 @@ enum CorrectionDiffEngine {
                 TextSegment(text: String(text[range]), range: range, isBoundary: false)
             )
         }
-        return results
+        return results.flatMap { segment in
+            guard !segment.isBoundary, AutoLearnChineseTokenization.containsHan(segment.text) else {
+                return [segment]
+            }
+            let ranges = AutoLearnChineseTokenization.wordRanges(in: text, range: segment.range)
+            // Preserve the span if tokenization fails; review rejects terms with no lexical tokens.
+            guard !ranges.isEmpty else { return [segment] }
+            var tokens: [TextSegment] = []
+            var cursor = segment.range.lowerBound
+            for range in ranges {
+                if cursor < range.lowerBound {
+                    let gap = cursor..<range.lowerBound
+                    tokens.append(TextSegment(text: String(text[gap]), range: gap, isBoundary: true))
+                }
+                tokens.append(TextSegment(text: String(text[range]), range: range, isBoundary: false))
+                cursor = range.upperBound
+            }
+            if cursor < segment.range.upperBound {
+                let gap = cursor..<segment.range.upperBound
+                tokens.append(TextSegment(text: String(text[gap]), range: gap, isBoundary: true))
+            }
+            return tokens
+        }
     }
 
     private static func isStructuralSeparator(
